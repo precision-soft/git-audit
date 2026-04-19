@@ -1,0 +1,10 @@
+/.env.local
+/.dev-data/
+/.idea/
+/.claude/
+/CLAUDE.md
+/AUDIT_REPORT.md
+/git-audit
+/var/
+/*.zip
+/*.tar.gz
