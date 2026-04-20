@@ -131,3 +131,54 @@ func TestUnifiedDiffIdenticalInputsProduceNoChanges(t *testing.T) {
         }
     }
 }
+
+func TestExtractChangelogTitleFromTitledHeading(t *testing.T) {
+    content := "## [v1.2.3] - 2026-04-20 - Some Release Title\n\n- change\n"
+    title, found := extractChangelogTitle(content, "v1.2.3")
+    if false == found {
+        t.Fatalf("expected to find title for v1.2.3")
+    }
+    if "Some Release Title" != title {
+        t.Errorf("got title %q, want %q", title, "Some Release Title")
+    }
+}
+
+func TestExtractChangelogTitleReturnsFalseForDatedOnly(t *testing.T) {
+    content := "## [v1.2.3] - 2026-04-20\n\n### Added\n\n- change\n"
+    _, found := extractChangelogTitle(content, "v1.2.3")
+    if true == found {
+        t.Errorf("expected no title for dated-only heading")
+    }
+}
+
+func TestExtractChangelogTitleReturnsFalseForUnknownVersion(t *testing.T) {
+    content := "## [v1.2.3] - 2026-04-20 - Title\n"
+    _, found := extractChangelogTitle(content, "v9.9.9")
+    if true == found {
+        t.Errorf("expected no title for missing version")
+    }
+}
+
+func TestBuildReleaseNameComposesTitleFormat(t *testing.T) {
+    content := "## [v2.0.0] - 2026-04-20 - Big Refactor\n\n- bullet\n"
+    name := buildReleaseName("Symfony PHPUnit", "v2.0.0", content)
+    if "Symfony PHPUnit v2.0.0 - Big Refactor" != name {
+        t.Errorf("got %q, want %q", name, "Symfony PHPUnit v2.0.0 - Big Refactor")
+    }
+}
+
+func TestBuildReleaseNameReturnsEmptyWhenTitleMissing(t *testing.T) {
+    content := "## [v2.0.0] - 2026-04-20\n\n### Added\n\n- bullet\n"
+    name := buildReleaseName("Symfony PHPUnit", "v2.0.0", content)
+    if "" != name {
+        t.Errorf("expected empty name for dated-only heading, got %q", name)
+    }
+}
+
+func TestBuildReleaseNameReturnsEmptyWhenProjectNameMissing(t *testing.T) {
+    content := "## [v2.0.0] - 2026-04-20 - Big Refactor\n\n- bullet\n"
+    name := buildReleaseName("", "v2.0.0", content)
+    if "" != name {
+        t.Errorf("expected empty name when projectName is empty, got %q", name)
+    }
+}

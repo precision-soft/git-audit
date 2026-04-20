@@ -25,17 +25,19 @@ var changelogVersionListRegex = regexp.MustCompile(`(?m)^##\s+\[?(v\d+\.\d+\.\d+
 type SyncCommand struct{}
 
 type syncResult struct {
-    Repository string `json:"repository"`
-    Tag        string `json:"tag"`
-    Status     string `json:"status"`
-    Message    string `json:"message,omitempty"`
-    Diff       string `json:"diff,omitempty"`
+    Repository  string `json:"repository"`
+    Tag         string `json:"tag"`
+    Status      string `json:"status"`
+    Message     string `json:"message,omitempty"`
+    Diff        string `json:"diff,omitempty"`
+    TitleChange string `json:"titleChange,omitempty"`
 }
 
 type syncDiff struct {
-    repository string
-    tag        string
-    diff       string
+    repository  string
+    tag         string
+    diff        string
+    titleChange string
 }
 
 func (command *SyncCommand) Name() string {
@@ -194,7 +196,11 @@ func (command *SyncCommand) Run(
                     continue
                 }
 
-                if true == compareReleaseBody(release.Body, foldedBody) {
+                desiredName := buildReleaseName(projectConfig.Name, version, content)
+                bodyMatches := compareReleaseBody(release.Body, foldedBody)
+                nameMatches := "" == desiredName || release.Name == desiredName
+
+                if true == bodyMatches && true == nameMatches {
                     results = append(results, syncResult{
                         Repository: repository,
                         Tag:        version,
@@ -204,24 +210,34 @@ func (command *SyncCommand) Run(
                     continue
                 }
 
+                titleChange := ""
+                if false == nameMatches {
+                    titleChange = fmt.Sprintf("%q → %q", release.Name, desiredName)
+                }
+
                 if true == dryRun {
-                    bodyDiff := unifiedDiff(canonicalReleaseBody(release.Body), canonicalReleaseBody(foldedBody))
+                    bodyDiff := ""
+                    if false == bodyMatches {
+                        bodyDiff = unifiedDiff(canonicalReleaseBody(release.Body), canonicalReleaseBody(foldedBody))
+                    }
                     results = append(results, syncResult{
-                        Repository: repository,
-                        Tag:        version,
-                        Status:     "would-update",
-                        Diff:       bodyDiff,
+                        Repository:  repository,
+                        Tag:         version,
+                        Status:      "would-update",
+                        Diff:        bodyDiff,
+                        TitleChange: titleChange,
                     })
                     diffs = append(diffs, syncDiff{
-                        repository: repository,
-                        tag:        version,
-                        diff:       bodyDiff,
+                        repository:  repository,
+                        tag:         version,
+                        diff:        bodyDiff,
+                        titleChange: titleChange,
                     })
                     counts["would-update"]++
                     continue
                 }
 
-                updateErr := githubClient.UpdateReleaseBody(organization, repository, release.ID, foldedBody)
+                updateErr := githubClient.UpdateRelease(organization, repository, release.ID, foldedBody, desiredName)
                 if nil != updateErr {
                     results = append(results, syncResult{
                         Repository: repository,
@@ -313,8 +329,13 @@ func printSyncDiffs(writer io.Writer, diffs []syncDiff) {
         fmt.Fprintf(writer, "  %s\n", repositoryKey)
         for _, entry := range byRepository[repositoryKey] {
             fmt.Fprintf(writer, "    %s\n", entry.tag)
+            if "" != entry.titleChange {
+                fmt.Fprintf(writer, "      title: %s\n", entry.titleChange)
+            }
             if "" == entry.diff {
-                fmt.Fprintln(writer, "      (no textual changes after normalization)")
+                if "" == entry.titleChange {
+                    fmt.Fprintln(writer, "      (no textual changes after normalization)")
+                }
                 continue
             }
             for _, line := range strings.Split(entry.diff, "\n") {
@@ -379,6 +400,27 @@ func splitLinesForDiff(text string) []string {
         return nil
     }
     return strings.Split(text, "\n")
+}
+
+func extractChangelogTitle(content, version string) (string, bool) {
+    matches := changelogDatedTitledHeading.FindAllStringSubmatch(content, -1)
+    for _, match := range matches {
+        if match[1] == version {
+            return strings.TrimSpace(match[3]), true
+        }
+    }
+    return "", false
+}
+
+func buildReleaseName(projectName, version, content string) string {
+    if "" == projectName {
+        return ""
+    }
+    title, found := extractChangelogTitle(content, version)
+    if false == found {
+        return ""
+    }
+    return fmt.Sprintf("%s %s - %s", projectName, version, title)
 }
 
 func listChangelogVersions(content string) []string {

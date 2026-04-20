@@ -75,13 +75,13 @@ Precedence for the token: `--token` flag > `github.token` in the melody config >
 
 #### Audit rules
 
-| Level          | Rule                                                                                                                                    |
-|----------------|-----------------------------------------------------------------------------------------------------------------------------------------|
-| `integrity`    | Tag ↔ release 1:1; release is not draft/prerelease; `target_commitish` matches tag commit.                                              |
-| `distribution` | Packagist has a version with a matching commit reference (skipped when no Packagist).                                                   |
+| Level          | Rule                                                                                                                                                                                                       |
+|----------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `integrity`    | Tag ↔ release 1:1; release is not draft/prerelease; `target_commitish` matches tag commit.                                                                                                                 |
+| `distribution` | Packagist has a version with a matching commit reference (skipped when no Packagist).                                                                                                                      |
 | `changelog`    | Entry exists; heading matches `## [vX.Y.Z] - YYYY-MM-DD - <Title>`; `[vX.Y.Z]: .../compare/...` link; heading title matches the release title `<Summary>`; release body overlap ≥60% with changelog entry. |
-| `diff`         | Previous-tag compare has ≥1 commit; non-trivial diffs must have release notes.                                                          |
-| `presentation` | Title matches `<Name> vX.Y.Z - <Summary>`; only whitelisted `## ` sections.                                                             |
+| `diff`         | Previous-tag compare has ≥1 commit; non-trivial diffs must have release notes.                                                                                                                             |
+| `presentation` | Title matches `<Name> vX.Y.Z - <Summary>`; only whitelisted `## ` sections.                                                                                                                                |
 
 Projects are audited in parallel (4 at a time). The summary block aggregates per-level status; per-repo issue blocks follow.
 
@@ -125,17 +125,17 @@ Lists entries grouped by repo — `version`, `level`, `issue`, `reviewed_until` 
 
 ```json
 {
-  "precision-soft/doctrine-type": {
-    "v1.0.0": {
-      "presentation": [
-        "title project name \"DoctrineType\" does not match expected \"Doctrine Type\"",
-        {
-          "issue": "non-standard section: ## Notes",
-          "reviewed_until": "2026-07-01"
+    "precision-soft/doctrine-type": {
+        "v1.0.0": {
+            "presentation": [
+                "title project name \"DoctrineType\" does not match expected \"Doctrine Type\"",
+                {
+                    "issue": "non-standard section: ## Notes",
+                    "reviewed_until": "2026-07-01"
+                }
+            ]
         }
-      ]
     }
-  }
 }
 ```
 

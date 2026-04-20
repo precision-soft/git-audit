@@ -243,7 +243,7 @@ func (client *GithubClient) CompareTags(organization, repository, base, head str
     return &compareResponse, nil
 }
 
-func (client *GithubClient) UpdateReleaseBody(organization, repository string, releaseId int64, body string) error {
+func (client *GithubClient) UpdateRelease(organization, repository string, releaseId int64, body, name string) error {
     if "" == strings.TrimSpace(client.token) {
         return fmt.Errorf("github token required to update release")
     }
@@ -252,7 +252,8 @@ func (client *GithubClient) UpdateReleaseBody(organization, repository string, r
 
     payload, marshalErr := json.Marshal(struct {
         Body string `json:"body"`
-    }{Body: body})
+        Name string `json:"name,omitempty"`
+    }{Body: body, Name: name})
     if nil != marshalErr {
         return marshalErr
     }

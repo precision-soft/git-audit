@@ -2,21 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [Unreleased]
+## 2026-04-20
 
 ### Changed
 
 - `changelog` level now requires the heading format `## [vX.Y.Z] - YYYY-MM-DD - <Title>`. Dated headings without a title still parse but emit a warning. The heading title is cross-checked against the GitHub release title summary; a mismatch is reported as a warning so the CHANGELOG stays the single source of truth for the release title
 - `audit` CLI — first-tagged release is no longer reported as missing a compare link; the rule only fires on non-first tags
+- `sync` command now updates the GitHub release **title** in addition to the body: the desired title is built as `<repository> <vX.Y.Z> - <Title>` from the CHANGELOG titled heading. Dry-run output shows a `title: "current" → "desired"` line; `--apply` sends a single `PATCH` with both `body` and `name`. Entries without a titled heading leave the existing release title untouched (the field is omitted from the payload)
+- `service/github.go` — `UpdateReleaseBody(organization, repository, releaseId, body)` renamed to `UpdateRelease(organization, repository, releaseId, body, name)`; `name` is omitted from the JSON payload when empty so legacy dated-only entries do not clobber existing release titles
+- `config/project/project.go` — removed `git-audit` from its own default project list. git-audit is a standalone CLI tool (no tagged releases, no Packagist), so auditing itself would always fail the integrity level; `CHANGELOG.md` reformatted to date-based sections (`## YYYY-MM-DD`) instead of version-tagged headings
 
 ### Added
 
 - `cli/audit_command_test.go` — unit tests covering titled heading parsing, dated-only-heading warning, first-tag skip, and non-first-tag compare-link enforcement
+- `cli/sync_command_test.go` — unit tests for `extractChangelogTitle()` (titled heading, dated-only, unknown version) and `buildReleaseName()` (format composition, empty when title missing)
 
-## [v0.1.0] - 2026-04-19 - Initial release
+## 2026-04-19
 
 ### Added
 
@@ -27,5 +28,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--repo-url URL` flag on both `audit` and `sync` — opt-in support for repositories not in the built-in project list
 - Centralized HTTP behavior in `service/http_retry.go`: 30s timeout, 3 attempts with exponential backoff on 5xx/429, rate-limit tracking (peak-usage `Remaining`)
 - Default project list in `config/project/project.go` for `precision-soft/*` open-source repositories
-
-[v0.1.0]: https://github.com/precision-soft/git-audit/releases/tag/v0.1.0
