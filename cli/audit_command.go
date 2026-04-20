@@ -31,14 +31,15 @@ const (
 )
 
 var (
-    versionRegex          = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
-    goSubmoduleTagRegex   = regexp.MustCompile(`^.+/v\d+\.\d+\.\d+$`)
-    titlePartsRegex       = regexp.MustCompile(`^(.+?)\s+(v\d+\.\d+\.\d+)\s+-\s+(.+)$`)
-    changelogHeadingV2    = regexp.MustCompile(`(?m)^##\s+\[(v\d+\.\d+\.\d+)\]`)
-    changelogHeadingV1    = regexp.MustCompile(`(?m)^##\s+(v\d+\.\d+\.\d+)`)
-    changelogDatedHeading = regexp.MustCompile(`(?m)^##\s+\[(v\d+\.\d+\.\d+)\]\s+-\s+(\d{4}-\d{2}-\d{2})\s*$`)
-    changelogCompareLink  = regexp.MustCompile(`(?m)^\[(v\d+\.\d+\.\d+)\]:\s*https?://\S+/compare/\S+`)
-    shaHexRegex           = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
+    versionRegex                = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
+    goSubmoduleTagRegex         = regexp.MustCompile(`^.+/v\d+\.\d+\.\d+$`)
+    titlePartsRegex             = regexp.MustCompile(`^(.+?)\s+(v\d+\.\d+\.\d+)\s+-\s+(.+)$`)
+    changelogHeadingV2          = regexp.MustCompile(`(?m)^##\s+\[(v\d+\.\d+\.\d+)\]`)
+    changelogHeadingV1          = regexp.MustCompile(`(?m)^##\s+(v\d+\.\d+\.\d+)`)
+    changelogDatedTitledHeading = regexp.MustCompile(`(?m)^##\s+\[(v\d+\.\d+\.\d+)\]\s+-\s+(\d{4}-\d{2}-\d{2})\s+-\s+(.+?)\s*$`)
+    changelogDatedHeading       = regexp.MustCompile(`(?m)^##\s+\[(v\d+\.\d+\.\d+)\]\s+-\s+(\d{4}-\d{2}-\d{2})\s*$`)
+    changelogCompareLink        = regexp.MustCompile(`(?m)^\[(v\d+\.\d+\.\d+)\]:\s*https?://\S+/compare/\S+`)
+    shaHexRegex                 = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
 
     standardSections = map[string]bool{
         "## Fixed":            true,
@@ -65,6 +66,7 @@ type ChangelogAuditResult struct {
     HasVersion     bool
     EntryBody      string
     NormalizedBody string
+    HeadingTitle   string
 }
 
 type ChangelogSource struct {
@@ -552,6 +554,7 @@ func auditRelease(
 
     changelogAudit := auditChangelog(
         tag.Name,
+        previousTagName,
         release,
         changelogPaths,
         changelogSources,
@@ -648,6 +651,7 @@ func auditDistribution(
 
 func auditChangelog(
     tagName string,
+    previousTagName string,
     release *service.GithubRelease,
     changelogPaths []string,
     changelogSources map[string]ChangelogSource,
@@ -696,7 +700,21 @@ func auditChangelog(
             NormalizedBody: normalizeMarkdownBlock(entryBody),
         }
 
-        applyChangelogDateAndLinkChecks(tagName, source.Content, changelogPath, result)
+        applyChangelogDateAndLinkChecks(tagName, previousTagName, source.Content, changelogPath, result)
+
+        if nil != release && "" != result.HeadingTitle {
+            releaseTitleMatches := titlePartsRegex.FindStringSubmatch(strings.TrimSpace(release.Name))
+            if nil != releaseTitleMatches {
+                releaseSummary := strings.TrimSpace(releaseTitleMatches[3])
+                if false == strings.EqualFold(releaseSummary, result.HeadingTitle) {
+                    result.Status = maxLevelStatus(result.Status, types.LevelWarning)
+                    result.Issues = append(result.Issues, fmt.Sprintf(
+                        "changelog heading title %q does not match release title summary %q (in %s)",
+                        result.HeadingTitle, releaseSummary, changelogPath,
+                    ))
+                }
+            }
+        }
 
         if nil == release {
             matchedResult = result
@@ -1286,27 +1304,58 @@ func resolveChangelogPaths(projectConfig project.ProjectConfig) []string {
     return []string{"CHANGELOG.md"}
 }
 
-func applyChangelogDateAndLinkChecks(version, content, changelogPath string, result *ChangelogAuditResult) {
-    datedMatches := changelogDatedHeading.FindAllStringSubmatch(content, -1)
-    datedIndex := -1
-    for matchIndex, match := range datedMatches {
+func applyChangelogDateAndLinkChecks(version, previousTagName, content, changelogPath string, result *ChangelogAuditResult) {
+    titledMatches := changelogDatedTitledHeading.FindAllStringSubmatch(content, -1)
+    titledIndex := -1
+    for matchIndex, match := range titledMatches {
         if match[1] == version {
-            datedIndex = matchIndex
+            titledIndex = matchIndex
             break
         }
     }
-    if -1 == datedIndex {
-        result.Status = maxLevelStatus(result.Status, types.LevelWarning)
-        result.Issues = append(result.Issues, fmt.Sprintf(
-            "changelog entry for %s in %s is missing the ' - YYYY-MM-DD' date suffix",
-            version, changelogPath,
-        ))
-    } else if _, parseErr := time.Parse(exceptionDateLayout, datedMatches[datedIndex][2]); nil != parseErr {
-        result.Status = maxLevelStatus(result.Status, types.LevelWarning)
-        result.Issues = append(result.Issues, fmt.Sprintf(
-            "changelog entry for %s in %s has unparseable date %q",
-            version, changelogPath, datedMatches[datedIndex][2],
-        ))
+
+    if -1 != titledIndex {
+        if _, parseErr := time.Parse(exceptionDateLayout, titledMatches[titledIndex][2]); nil != parseErr {
+            result.Status = maxLevelStatus(result.Status, types.LevelWarning)
+            result.Issues = append(result.Issues, fmt.Sprintf(
+                "changelog entry for %s in %s has unparseable date %q",
+                version, changelogPath, titledMatches[titledIndex][2],
+            ))
+        }
+        result.HeadingTitle = strings.TrimSpace(titledMatches[titledIndex][3])
+    } else {
+        datedMatches := changelogDatedHeading.FindAllStringSubmatch(content, -1)
+        datedIndex := -1
+        for matchIndex, match := range datedMatches {
+            if match[1] == version {
+                datedIndex = matchIndex
+                break
+            }
+        }
+        if -1 == datedIndex {
+            result.Status = maxLevelStatus(result.Status, types.LevelWarning)
+            result.Issues = append(result.Issues, fmt.Sprintf(
+                "changelog entry for %s in %s is missing the ' - YYYY-MM-DD - <Title>' heading suffix",
+                version, changelogPath,
+            ))
+        } else {
+            if _, parseErr := time.Parse(exceptionDateLayout, datedMatches[datedIndex][2]); nil != parseErr {
+                result.Status = maxLevelStatus(result.Status, types.LevelWarning)
+                result.Issues = append(result.Issues, fmt.Sprintf(
+                    "changelog entry for %s in %s has unparseable date %q",
+                    version, changelogPath, datedMatches[datedIndex][2],
+                ))
+            }
+            result.Status = maxLevelStatus(result.Status, types.LevelWarning)
+            result.Issues = append(result.Issues, fmt.Sprintf(
+                "changelog entry for %s in %s is missing the ' - <Title>' suffix after the date",
+                version, changelogPath,
+            ))
+        }
+    }
+
+    if "" == previousTagName {
+        return
     }
 
     compareLinkMatches := changelogCompareLink.FindAllStringSubmatch(content, -1)

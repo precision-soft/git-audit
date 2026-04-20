@@ -5,7 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [v0.1.0] - 2026-04-19
+## [Unreleased]
+
+### Changed
+
+- `changelog` level now requires the heading format `## [vX.Y.Z] - YYYY-MM-DD - <Title>`. Dated headings without a title still parse but emit a warning. The heading title is cross-checked against the GitHub release title summary; a mismatch is reported as a warning so the CHANGELOG stays the single source of truth for the release title
+- `audit` CLI — first-tagged release is no longer reported as missing a compare link; the rule only fires on non-first tags
+
+### Added
+
+- `cli/audit_command_test.go` — unit tests covering titled heading parsing, dated-only-heading warning, first-tag skip, and non-first-tag compare-link enforcement
+
+## [v0.1.0] - 2026-04-19 - Initial release
 
 ### Added
 

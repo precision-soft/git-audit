@@ -3,6 +3,8 @@ package cli
 import (
     "strings"
     "testing"
+
+    "github.com/precision-soft/git-audit/types"
 )
 
 func TestCompareSemver(t *testing.T) {
@@ -109,6 +111,116 @@ func TestShortSha(t *testing.T) {
     }
     if got := shortSha("abc"); "abc" != got {
         t.Errorf("shortSha short input = %q, want abc", got)
+    }
+}
+
+func TestApplyChangelogDateAndLinkChecks_FirstTagSkipsCompareLink(t *testing.T) {
+    content := "# Changelog\n\n" +
+        "## [v1.0.0] - 2026-01-15 - Initial release\n\n" +
+        "### Added\n\n- Initial release\n\n"
+
+    result := &ChangelogAuditResult{Status: types.LevelOk}
+    applyChangelogDateAndLinkChecks("v1.0.0", "", content, "CHANGELOG.md", result)
+
+    if types.LevelOk != result.Status {
+        t.Errorf("first tag should not produce warnings, got status=%v issues=%v", result.Status, result.Issues)
+    }
+    for _, issue := range result.Issues {
+        if true == strings.Contains(issue, "compare link") {
+            t.Errorf("first tag should not emit compare-link issue, got %q", issue)
+        }
+    }
+    if "Initial release" != result.HeadingTitle {
+        t.Errorf("expected HeadingTitle=%q, got %q", "Initial release", result.HeadingTitle)
+    }
+}
+
+func TestApplyChangelogDateAndLinkChecks_NonFirstTagRequiresCompareLink(t *testing.T) {
+    content := "# Changelog\n\n" +
+        "## [v1.0.1] - 2026-02-01 - Small fix\n\n" +
+        "### Fixed\n\n- Small fix\n\n"
+
+    result := &ChangelogAuditResult{Status: types.LevelOk}
+    applyChangelogDateAndLinkChecks("v1.0.1", "v1.0.0", content, "CHANGELOG.md", result)
+
+    if types.LevelWarning != result.Status {
+        t.Errorf("non-first tag without compare link should warn, got status=%v", result.Status)
+    }
+    foundCompareIssue := false
+    for _, issue := range result.Issues {
+        if true == strings.Contains(issue, "missing compare link") {
+            foundCompareIssue = true
+            break
+        }
+    }
+    if false == foundCompareIssue {
+        t.Errorf("expected compare-link issue, got %v", result.Issues)
+    }
+}
+
+func TestApplyChangelogDateAndLinkChecks_FirstTagStillValidatesDate(t *testing.T) {
+    content := "# Changelog\n\n" +
+        "## [v1.0.0]\n\n" +
+        "### Added\n\n- Initial release\n\n"
+
+    result := &ChangelogAuditResult{Status: types.LevelOk}
+    applyChangelogDateAndLinkChecks("v1.0.0", "", content, "CHANGELOG.md", result)
+
+    if types.LevelWarning != result.Status {
+        t.Errorf("missing date/title on first tag should still warn, got status=%v", result.Status)
+    }
+    foundHeadingIssue := false
+    for _, issue := range result.Issues {
+        if true == strings.Contains(issue, "YYYY-MM-DD - <Title>") {
+            foundHeadingIssue = true
+            break
+        }
+    }
+    if false == foundHeadingIssue {
+        t.Errorf("expected heading-suffix issue, got %v", result.Issues)
+    }
+}
+
+func TestApplyChangelogDateAndLinkChecks_DatedWithoutTitleWarns(t *testing.T) {
+    content := "# Changelog\n\n" +
+        "## [v1.0.0] - 2026-01-15\n\n" +
+        "### Added\n\n- Initial release\n\n"
+
+    result := &ChangelogAuditResult{Status: types.LevelOk}
+    applyChangelogDateAndLinkChecks("v1.0.0", "", content, "CHANGELOG.md", result)
+
+    if types.LevelWarning != result.Status {
+        t.Errorf("dated heading without title should warn, got status=%v", result.Status)
+    }
+    foundTitleIssue := false
+    for _, issue := range result.Issues {
+        if true == strings.Contains(issue, "<Title>") && true == strings.Contains(issue, "after the date") {
+            foundTitleIssue = true
+            break
+        }
+    }
+    if false == foundTitleIssue {
+        t.Errorf("expected missing-title issue, got %v", result.Issues)
+    }
+    if "" != result.HeadingTitle {
+        t.Errorf("expected HeadingTitle to be empty for legacy dated heading, got %q", result.HeadingTitle)
+    }
+}
+
+func TestApplyChangelogDateAndLinkChecks_TitledHeadingExtractsTitleAndSkipsWarning(t *testing.T) {
+    content := "# Changelog\n\n" +
+        "## [v2.0.0] - 2026-03-01 - Harden HTTP timeouts\n\n" +
+        "### Added\n\n- Timeout defaults\n\n" +
+        "[v2.0.0]: https://example.com/compare/v1.0.0...v2.0.0\n"
+
+    result := &ChangelogAuditResult{Status: types.LevelOk}
+    applyChangelogDateAndLinkChecks("v2.0.0", "v1.0.0", content, "CHANGELOG.md", result)
+
+    if types.LevelOk != result.Status {
+        t.Errorf("titled heading with compare link should pass clean, got status=%v issues=%v", result.Status, result.Issues)
+    }
+    if "Harden HTTP timeouts" != result.HeadingTitle {
+        t.Errorf("expected HeadingTitle=%q, got %q", "Harden HTTP timeouts", result.HeadingTitle)
     }
 }
 

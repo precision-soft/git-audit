@@ -79,7 +79,7 @@ Precedence for the token: `--token` flag > `github.token` in the melody config >
 |----------------|-----------------------------------------------------------------------------------------------------------------------------------------|
 | `integrity`    | Tag ↔ release 1:1; release is not draft/prerelease; `target_commitish` matches tag commit.                                              |
 | `distribution` | Packagist has a version with a matching commit reference (skipped when no Packagist).                                                   |
-| `changelog`    | Entry exists; `## [vX.Y.Z] - YYYY-MM-DD` date suffix; `[vX.Y.Z]: .../compare/...` link; release body overlap ≥60% with changelog entry. |
+| `changelog`    | Entry exists; heading matches `## [vX.Y.Z] - YYYY-MM-DD - <Title>`; `[vX.Y.Z]: .../compare/...` link; heading title matches the release title `<Summary>`; release body overlap ≥60% with changelog entry. |
 | `diff`         | Previous-tag compare has ≥1 commit; non-trivial diffs must have release notes.                                                          |
 | `presentation` | Title matches `<Name> vX.Y.Z - <Summary>`; only whitelisted `## ` sections.                                                             |
 
