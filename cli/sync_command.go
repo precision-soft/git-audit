@@ -18,7 +18,10 @@ import (
     runtimecontract "github.com/precision-soft/melody/v3/runtime/contract"
 )
 
-const flagApply = "apply"
+const (
+    flagApply = "apply"
+    flagTag   = "tag"
+)
 
 var changelogVersionListRegex = regexp.MustCompile(`(?m)^##\s+\[?(v\d+\.\d+\.\d+)\]?`)
 
@@ -64,6 +67,10 @@ func (command *SyncCommand) Flags() []clicontract.Flag {
                 Name:  flagRepoUrl,
                 Usage: "github URL for a repo not in the built-in project list (required when --repo is unknown)",
             },
+            &clicontract.StringFlag{
+                Name:  flagTag,
+                Usage: "restrict to a single tag (e.g. v3.4.1) — useful for testing sync on one release before rolling across all tags",
+            },
             &clicontract.BoolFlag{
                 Name:  flagApply,
                 Usage: "actually patch release bodies (default is dry-run: print per-tag unified diff, no API writes)",
@@ -90,6 +97,7 @@ func (command *SyncCommand) Run(
 
     repositoryFilter := strings.TrimSpace(commandContext.String(flagRepo))
     repositoryUrl := strings.TrimSpace(commandContext.String(flagRepoUrl))
+    tagFilter := strings.TrimSpace(commandContext.String(flagTag))
     dryRun := false == commandContext.Bool(flagApply)
 
     filteredProjects, resolveErr := resolveTargetProjects(repositoryFilter, repositoryUrl)
@@ -167,6 +175,10 @@ func (command *SyncCommand) Run(
             })
 
             for _, version := range versions {
+                if "" != tagFilter && version != tagFilter {
+                    continue
+                }
+
                 entryBody, found := extractChangelogEntry(content, version)
                 if false == found {
                     continue

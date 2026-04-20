@@ -1391,7 +1391,7 @@ func extractChangelogEntry(content string, version string) (string, bool) {
                 continue
             }
 
-            start := match[1]
+            start := skipRestOfHeadingLine(content, match[1])
             end := len(content)
             if matchIndex+1 < len(matchIndexes) {
                 end = matchIndexes[matchIndex+1][0]
@@ -1409,7 +1409,7 @@ func extractChangelogEntry(content string, version string) (string, bool) {
                 continue
             }
 
-            start := match[1]
+            start := skipRestOfHeadingLine(content, match[1])
             end := len(content)
             if matchIndex+1 < len(matchIndexes) {
                 end = matchIndexes[matchIndex+1][0]
@@ -1420,6 +1420,14 @@ func extractChangelogEntry(content string, version string) (string, bool) {
     }
 
     return "", false
+}
+
+func skipRestOfHeadingLine(content string, start int) int {
+    newlineIndex := strings.IndexByte(content[start:], '\n')
+    if -1 == newlineIndex {
+        return len(content)
+    }
+    return start + newlineIndex + 1
 }
 
 func normalizeMarkdownBlock(input string) string {

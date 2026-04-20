@@ -4,18 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## 2026-04-20
 
+### Fixed
+
+- `extractChangelogEntry()` — the remainder of the heading line (` - YYYY-MM-DD - <Title>` for the titled form) previously leaked into the extracted entry body, so `sync` pushed a stray `- 2026-04-20 - Title` bullet as the first line of every release notes body. Extraction now advances past the newline at the end of the heading line so the body begins cleanly at the first `### Section`. The same fix also cleans up the trivial V1 (`## vX.Y.Z`) case
+
 ### Changed
 
 - `changelog` level now requires the heading format `## [vX.Y.Z] - YYYY-MM-DD - <Title>`. Dated headings without a title still parse but emit a warning. The heading title is cross-checked against the GitHub release title summary; a mismatch is reported as a warning so the CHANGELOG stays the single source of truth for the release title
 - `audit` CLI — first-tagged release is no longer reported as missing a compare link; the rule only fires on non-first tags
-- `sync` command now updates the GitHub release **title** in addition to the body: the desired title is built as `<repository> <vX.Y.Z> - <Title>` from the CHANGELOG titled heading. Dry-run output shows a `title: "current" → "desired"` line; `--apply` sends a single `PATCH` with both `body` and `name`. Entries without a titled heading leave the existing release title untouched (the field is omitted from the payload)
+- `sync` command now updates the GitHub release **title** in addition to the body: the desired title is built as `<Project Name> <vX.Y.Z> - <Title>` from the CHANGELOG titled heading, using the `Name` field configured in `config/project/project.go`. Dry-run output shows a `title: "current" → "desired"` line; `--apply` sends a single `PATCH` with both `body` and `name`. Entries without a titled heading — or projects without a configured `Name` — leave the existing release title untouched (the `name` field is omitted from the payload), so sync never regresses manually curated titles
 - `service/github.go` — `UpdateReleaseBody(organization, repository, releaseId, body)` renamed to `UpdateRelease(organization, repository, releaseId, body, name)`; `name` is omitted from the JSON payload when empty so legacy dated-only entries do not clobber existing release titles
+- `config/project/project.go` — `Name` field filled for every built-in project (`Doctrine Type`, `Doctrine Utility`, `Symfony Console`, `Symfony Doctrine Audit`, `Symfony Doctrine Encrypt`, `Symfony JSON Form`, `Symfony PHPUnit`) so audit `titlePartsRegex` and sync title composition agree on the canonical, human-readable project label
 - `config/project/project.go` — removed `git-audit` from its own default project list. git-audit is a standalone CLI tool (no tagged releases, no Packagist), so auditing itself would always fail the integrity level; `CHANGELOG.md` reformatted to date-based sections (`## YYYY-MM-DD`) instead of version-tagged headings
 
 ### Added
 
-- `cli/audit_command_test.go` — unit tests covering titled heading parsing, dated-only-heading warning, first-tag skip, and non-first-tag compare-link enforcement
-- `cli/sync_command_test.go` — unit tests for `extractChangelogTitle()` (titled heading, dated-only, unknown version) and `buildReleaseName()` (format composition, empty when title missing)
+- `sync --tag vX.Y.Z` — restrict sync to a single tag across the filtered projects. Useful for rehearsing a sync on one release before rolling across all tags
+- `cli/audit_command_test.go` — unit tests covering titled heading parsing, dated-only-heading warning, first-tag skip, non-first-tag compare-link enforcement, heading-tail stripping in `extractChangelogEntry()` for both V1 and V2 formats
+- `cli/sync_command_test.go` — unit tests for `extractChangelogTitle()` (titled heading, dated-only, unknown version) and `buildReleaseName()` (format composition, empty when title missing, empty when project name missing)
 
 ## 2026-04-19
 

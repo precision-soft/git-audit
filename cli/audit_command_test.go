@@ -85,6 +85,40 @@ func TestExtractChangelogEntry(t *testing.T) {
     }
 }
 
+func TestExtractChangelogEntryStripsHeadingTail(t *testing.T) {
+    content := "# Changelog\n\n" +
+        "## [v1.2.3] - 2026-04-20 - Some Release Title\n\n" +
+        "### Changed\n\n- actual change\n"
+
+    body, found := extractChangelogEntry(content, "v1.2.3")
+    if false == found {
+        t.Fatalf("expected to find v1.2.3 entry")
+    }
+    if true == strings.Contains(body, "2026-04-20") {
+        t.Errorf("body should not contain heading date, got %q", body)
+    }
+    if true == strings.Contains(body, "Some Release Title") {
+        t.Errorf("body should not contain heading title, got %q", body)
+    }
+    if false == strings.HasPrefix(body, "### Changed") {
+        t.Errorf("body should start at the first section heading, got %q", body)
+    }
+}
+
+func TestExtractChangelogEntryHandlesV1HeadingFormat(t *testing.T) {
+    content := "# Changelog\n\n" +
+        "## v1.0.0\n\n" +
+        "### Added\n\n- initial\n"
+
+    body, found := extractChangelogEntry(content, "v1.0.0")
+    if false == found {
+        t.Fatalf("expected to find v1.0.0 entry")
+    }
+    if false == strings.HasPrefix(body, "### Added") {
+        t.Errorf("body should start at the first section heading, got %q", body)
+    }
+}
+
 func TestTitlePartsRegex(t *testing.T) {
     cases := []struct {
         title string
