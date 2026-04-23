@@ -65,13 +65,13 @@ Precedence for the token: `--token` flag > `github.token` in the melody config >
 go run . audit [--token TOKEN] [--repo NAME] [--repo-url URL] [--fail-on-warning] [--exceptions PATH]
 ```
 
-| Flag                | Meaning                                                                                                                                                                                                                                                                                              |
-|---------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `--token TOKEN`     | GitHub token; overrides melody `github.token` / `GITHUB_TOKEN` env.                                                                                                                                                                                                                                  |
-| `--repo NAME`       | Filter by repo name; pass a comma-separated list for multiple repos (e.g. `doctrine-type` or `doctrine-type,doctrine-utility`).                                                                                                                                                                      |
+| Flag                | Meaning                                                                                                                                                                                                                                                                                                                                       |
+|---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `--token TOKEN`     | GitHub token; overrides melody `github.token` / `GITHUB_TOKEN` env.                                                                                                                                                                                                                                                                           |
+| `--repo NAME`       | Filter by repo name; pass a comma-separated list for multiple repos (e.g. `doctrine-type` or `doctrine-type,doctrine-utility`).                                                                                                                                                                                                               |
 | `--repo-url URL`    | GitHub URL for an ad-hoc repo not in the built-in project list (required when `--repo` doesn't match a known project; only valid with a single `--repo` value). Accepts HTTPS (`https://github.com/org/repo`) or SSH (`git@github.com:org/repo.git`). Ad-hoc repos default to no Packagist, a single `CHANGELOG.md`, and `GoSubmodule=false`. |
-| `--fail-on-warning` | Exit 1 on warnings, not only on failures.                                                                                                                                                                                                                                                            |
-| `--exceptions PATH` | JSON file of accepted issues (default `exceptions.json`). TTY prompts to add unacknowledged warnings.                                                                                                                                                                                                |
+| `--fail-on-warning` | Exit 1 on warnings, not only on failures.                                                                                                                                                                                                                                                                                                     |
+| `--exceptions PATH` | JSON file of accepted issues (default `exceptions.json`). TTY prompts to add unacknowledged warnings.                                                                                                                                                                                                                                         |
 
 #### Audit rules
 
@@ -93,12 +93,12 @@ go run . sync [--token TOKEN] [--repo NAME] [--repo-url URL] [--apply]
 
 **Default is dry-run** — reports `would-update` per tag and prints a unified diff (`+ added / - removed`) below the summary table. Pass `--apply` to actually PATCH release bodies.
 
-| Flag             | Meaning                                                                                   |
-|------------------|-------------------------------------------------------------------------------------------|
-| `--token TOKEN`  | GitHub token (required to list releases; also to PATCH when `--apply`).                   |
+| Flag             | Meaning                                                                                                              |
+|------------------|----------------------------------------------------------------------------------------------------------------------|
+| `--token TOKEN`  | GitHub token (required to list releases; also to PATCH when `--apply`).                                              |
 | `--repo NAME`    | Restrict to one repo, or a comma-separated list of repos (e.g. `doctrine-type` or `doctrine-type,doctrine-utility`). |
 | `--repo-url URL` | GitHub URL for an ad-hoc repo. Same format as `audit` — HTTPS or SSH; only valid with a single `--repo` value.       |
-| `--apply`        | Actually PATCH release bodies. Without this flag, `sync` runs as dry-run (no API writes). |
+| `--apply`        | Actually PATCH release bodies. Without this flag, `sync` runs as dry-run (no API writes).                            |
 
 **Local clones are managed automatically.** Before reading the changelog for each repo, `sync` ensures `.dev-data/clones/<repo>/` exists and is in sync with origin:
 

@@ -1,118 +1,55 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
+IFS=$'\n\t'
 
-. "${PWD}/.dev/utility.sh"
-
-stop() {
-    if [[ "$2" != "" ]]; then
-        error "$2"
-
-        println ""
-    fi
-
-    section "stop pre commit hook"
-    exit $1
-}
-
-check_container_dev() {
-    if [[ $(check_container "${CONTAINER_DEV}") != 0 ]]; then
-        println ""
-
-        stop 1 "$(error_container ${CONTAINER_DEV})"
-    fi
-}
-
-go_fmt() {
-    print_command "start go fmt"
-    println ""
-
-    UNFORMATTED=$(run_in_container_dev gofmt -l .)
-
-    if [[ "${UNFORMATTED}" != "" ]]; then
-        print_error "run 'gofmt -w' on the files listed above before commit"
-        println "${UNFORMATTED}"
-        stop 1
-    fi
-
-    print_command "end go fmt"
-}
-
-go_vet() {
-    print_command "start go vet"
-    println ""
-
-    run_in_container_dev go vet ./...
-
-    if [[ $? != 0 ]]; then
-        print_error "fix the errors before commit"
-        stop 1
-    fi
-
-    print_command "end go vet"
-}
-
-go_build() {
-    print_command "start go build"
-    println ""
-
-    run_in_container_dev go build ./...
-
-    if [[ $? != 0 ]]; then
-        print_error "fix the errors before commit"
-        stop 1
-    fi
-
-    print_command "end go build"
-}
-
-go_test() {
-    print_command "start go test"
-    println ""
-
-    run_in_container_dev go test ./...
-
-    if [[ $? != 0 ]]; then
-        print_error "fix the errors before commit"
-        stop 1
-    fi
-
-    print_command "end go test"
-}
-
-STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR)
-
-print_command "${PWD} start pre commit hook"
-
-if [[ "${STAGED_FILES}" = "" ]]; then
-    println "no files to commit"
-
-    stop 0
+REPOSITORY_ROOT_DIRECTORY_STRING="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ "" = "${REPOSITORY_ROOT_DIRECTORY_STRING}" ]]; then
+    exit 0
 fi
 
-println ""
+cd "${REPOSITORY_ROOT_DIRECTORY_STRING}"
 
-print_command "staged files start"
-println "${STAGED_FILES}"
-print_command "staged files end"
+. "${REPOSITORY_ROOT_DIRECTORY_STRING}/.dev/utility.sh"
 
-check_container_dev
+section_start "pre-commit" "${TAG_GIT}"
 
-STAGED_FILES_GO=$(git diff --cached --name-only --diff-filter=ACMR HEAD | grep \\.go$)
-if [[ "${STAGED_FILES_GO}" != "" ]]; then
-    go_fmt
+cleanup() {
+    local EXIT_CODE_INTEGER=$?
+    if [[ 0 -ne ${EXIT_CODE_INTEGER} ]]; then
+        section_end "pre-commit" "failure" "${TAG_GIT}"
+    else
+        section_end "pre-commit" "success" "${TAG_GIT}"
+    fi
+    exit ${EXIT_CODE_INTEGER}
+}
+trap cleanup EXIT
 
-    println ""
-
-    go_vet
-
-    println ""
-
-    go_build
-
-    println ""
-
-    go_test
+STAGED_PATH_LIST_STRING="$(git --no-pager diff --cached --name-only | awk 'NF' || true)"
+if [[ "" = "${STAGED_PATH_LIST_STRING}" ]]; then
+    error "no files to commit"
+    exit 1
 fi
 
-println ""
+FORBIDDEN_PATH_LIST_STRING="$(printf '%s\n' "${STAGED_PATH_LIST_STRING}" | awk '
+    /^\.dev-data\// && $0 != ".dev-data/.gitignore" { print; next }
+    $0 == ".dev/docker/.env.local" { print; next }
+')"
 
-stop 0
+if [[ "" = "${FORBIDDEN_PATH_LIST_STRING}" ]]; then
+    :
+else
+    error "forbidden artifacts staged"
+    while IFS= read -r FORBIDDEN_PATH_STRING; do
+        if [[ "" = "${FORBIDDEN_PATH_STRING}" ]]; then
+            continue
+        fi
+        print_bracket_line "${COLOR_RED}" "${TAG_GIT}" "forbidden" "${FORBIDDEN_PATH_STRING}"
+    done <<<"${FORBIDDEN_PATH_LIST_STRING}"
+    exit 1
+fi
+
+staged_files "staged files (start)"
+
+bash "${ROOT_DIR}/.dev/validate/all.sh" --staged
+
+staged_files "staged files (end)"

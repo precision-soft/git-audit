@@ -1,5 +1,14 @@
 #!/bin/bash
 
+# bash history
+export HISTFILE="${HOME}/.bash_history"
+export HISTSIZE=10000
+export HISTFILESIZE=10000
+if [ -n "${BASH_VERSION:-}" ]; then
+    shopt -s histappend
+fi
+# end bash history
+
 if [ -n "${BASH_VERSION:-}" ]; then
     if [[ -f /app/.dev/utility.sh ]]; then
         . /app/.dev/utility.sh

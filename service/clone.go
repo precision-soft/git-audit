@@ -46,7 +46,7 @@ func EnsureCloneReset(name, repositoryUrl string) (string, error) {
         return "", fmt.Errorf("%q exists and is not a directory", target)
     }
 
-    if fetchErr := runGit(target, "fetch", "--tags", "--prune", "origin"); nil != fetchErr {
+    if fetchErr := runGit(target, "fetch", "--tags", "--prune", "--force", "origin"); nil != fetchErr {
         return "", fmt.Errorf("fetch %q: %w", target, fetchErr)
     }
 

@@ -1,19 +1,19 @@
 {
-  "precision-soft/doctrine-type": {
-    "v2.0.2": {
-      "presentation": [
-        "title summary \"convertValueToDatabase rejects non-enum values with explicit exception\" must start with uppercase"
-      ]
-    },
-    "v3.1.2": {
-      "presentation": [
-        "title summary \"convertToPHPValue strict integer check and set null guard refactor\" must start with uppercase"
-      ]
-    },
-    "v3.2.1": {
-      "presentation": [
-        "title summary \"convertToPHPValue range validation and out-of-range helper\" must start with uppercase"
-      ]
+    "precision-soft/doctrine-type": {
+        "v2.0.2": {
+            "presentation": [
+                "title summary \"convertValueToDatabase rejects non-enum values with explicit exception\" must start with uppercase"
+            ]
+        },
+        "v3.1.2": {
+            "presentation": [
+                "title summary \"convertToPHPValue strict integer check and set null guard refactor\" must start with uppercase"
+            ]
+        },
+        "v3.2.1": {
+            "presentation": [
+                "title summary \"convertToPHPValue range validation and out-of-range helper\" must start with uppercase"
+            ]
+        }
     }
-  }
 }

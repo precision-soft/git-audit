@@ -14,7 +14,6 @@ import (
 
     clicontract "github.com/precision-soft/melody/v3/cli/contract"
     "github.com/precision-soft/melody/v3/cli/output"
-    melodyconfig "github.com/precision-soft/melody/v3/config"
     runtimecontract "github.com/precision-soft/melody/v3/runtime/contract"
 )
 
@@ -86,15 +85,6 @@ func (command *SyncCommand) Run(
 ) error {
     startedAt := time.Now()
 
-    token := strings.TrimSpace(commandContext.String(flagToken))
-    if "" == token {
-        configuration := melodyconfig.ConfigMustFromContainer(runtimeInstance.Container())
-        token = configuration.Get("github.token").String()
-    }
-    if "" == token {
-        return fmt.Errorf("github token required (--token or github_token env)")
-    }
-
     repositoryFilter := strings.TrimSpace(commandContext.String(flagRepo))
     repositoryUrl := strings.TrimSpace(commandContext.String(flagRepoUrl))
     tagFilter := strings.TrimSpace(commandContext.String(flagTag))
@@ -105,7 +95,10 @@ func (command *SyncCommand) Run(
         return resolveErr
     }
 
-    githubClient := service.NewGithubClient(token)
+    githubClient, resolveErr := resolveGithubClient(runtimeInstance, commandContext)
+    if nil != resolveErr {
+        return resolveErr
+    }
     option := output.NormalizeOption(output.ParseOptionFromCommand(commandContext))
     if 1 > option.TableMaxWidth {
         option.TableMaxWidth = autoTableMaxWidth()
