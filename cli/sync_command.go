@@ -61,7 +61,7 @@ func (command *SyncCommand) Flags() []clicontract.Flag {
             },
             &clicontract.StringFlag{
                 Name:  flagRepo,
-                Usage: "restrict to a single repository (by repo name, e.g. doctrine-type)",
+                Usage: "restrict to one or more repositories by repo name; comma-separated for multiple (e.g. doctrine-type or doctrine-type,doctrine-utility)",
             },
             &clicontract.StringFlag{
                 Name:  flagRepoUrl,
@@ -107,6 +107,9 @@ func (command *SyncCommand) Run(
 
     githubClient := service.NewGithubClient(token)
     option := output.NormalizeOption(output.ParseOptionFromCommand(commandContext))
+    if 1 > option.TableMaxWidth {
+        option.TableMaxWidth = autoTableMaxWidth()
+    }
     meta := output.NewMeta(
         command.Name(),
         commandContext.Args().Slice(),

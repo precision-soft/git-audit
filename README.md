@@ -62,14 +62,14 @@ Precedence for the token: `--token` flag > `github.token` in the melody config >
 ### audit
 
 ```bash
-./git-audit audit [--token TOKEN] [--repo NAME] [--repo-url URL] [--fail-on-warning] [--exceptions PATH]
+go run . audit [--token TOKEN] [--repo NAME] [--repo-url URL] [--fail-on-warning] [--exceptions PATH]
 ```
 
 | Flag                | Meaning                                                                                                                                                                                                                                                                                              |
 |---------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `--token TOKEN`     | GitHub token; overrides melody `github.token` / `GITHUB_TOKEN` env.                                                                                                                                                                                                                                  |
-| `--repo NAME`       | Filter to a single repo by name (e.g. `doctrine-type`).                                                                                                                                                                                                                                              |
-| `--repo-url URL`    | GitHub URL for an ad-hoc repo not in the built-in project list (required when `--repo` doesn't match a known project). Accepts HTTPS (`https://github.com/org/repo`) or SSH (`git@github.com:org/repo.git`). Ad-hoc repos default to no Packagist, a single `CHANGELOG.md`, and `GoSubmodule=false`. |
+| `--repo NAME`       | Filter by repo name; pass a comma-separated list for multiple repos (e.g. `doctrine-type` or `doctrine-type,doctrine-utility`).                                                                                                                                                                      |
+| `--repo-url URL`    | GitHub URL for an ad-hoc repo not in the built-in project list (required when `--repo` doesn't match a known project; only valid with a single `--repo` value). Accepts HTTPS (`https://github.com/org/repo`) or SSH (`git@github.com:org/repo.git`). Ad-hoc repos default to no Packagist, a single `CHANGELOG.md`, and `GoSubmodule=false`. |
 | `--fail-on-warning` | Exit 1 on warnings, not only on failures.                                                                                                                                                                                                                                                            |
 | `--exceptions PATH` | JSON file of accepted issues (default `exceptions.json`). TTY prompts to add unacknowledged warnings.                                                                                                                                                                                                |
 
@@ -88,7 +88,7 @@ Projects are audited in parallel (4 at a time). The summary block aggregates per
 ### sync
 
 ```bash
-./git-audit sync [--token TOKEN] [--repo NAME] [--repo-url URL] [--apply]
+go run . sync [--token TOKEN] [--repo NAME] [--repo-url URL] [--apply]
 ```
 
 **Default is dry-run** — reports `would-update` per tag and prints a unified diff (`+ added / - removed`) below the summary table. Pass `--apply` to actually PATCH release bodies.
@@ -96,8 +96,8 @@ Projects are audited in parallel (4 at a time). The summary block aggregates per
 | Flag             | Meaning                                                                                   |
 |------------------|-------------------------------------------------------------------------------------------|
 | `--token TOKEN`  | GitHub token (required to list releases; also to PATCH when `--apply`).                   |
-| `--repo NAME`    | Restrict to one project.                                                                  |
-| `--repo-url URL` | GitHub URL for an ad-hoc repo. Same format as `audit` — HTTPS or SSH.                     |
+| `--repo NAME`    | Restrict to one repo, or a comma-separated list of repos (e.g. `doctrine-type` or `doctrine-type,doctrine-utility`). |
+| `--repo-url URL` | GitHub URL for an ad-hoc repo. Same format as `audit` — HTTPS or SSH; only valid with a single `--repo` value.       |
 | `--apply`        | Actually PATCH release bodies. Without this flag, `sync` runs as dry-run (no API writes). |
 
 **Local clones are managed automatically.** Before reading the changelog for each repo, `sync` ensures `.dev-data/clones/<repo>/` exists and is in sync with origin:
@@ -116,7 +116,7 @@ For each `## [vX.Y.Z]` section in the changelog:
 ### exceptions
 
 ```bash
-./git-audit exceptions [--exceptions PATH]
+go run . exceptions [--exceptions PATH]
 ```
 
 Lists entries grouped by repo — `version`, `level`, `issue`, `reviewed_until` (with `(expired)` past due). Expired entries are ignored by `audit` so the warnings resurface.
@@ -147,12 +147,12 @@ Two supported modes for pointing git-audit at a repo:
 
 ```bash
 # Public repo — HTTPS
-./git-audit audit --repo my-lib --repo-url https://github.com/my-org/my-lib
-./git-audit sync  --repo my-lib --repo-url https://github.com/my-org/my-lib --apply
+go run . audit --repo my-lib --repo-url https://github.com/my-org/my-lib
+go run . sync  --repo my-lib --repo-url https://github.com/my-org/my-lib --apply
 
 # Private repo — SSH
-./git-audit audit --repo secret-svc --repo-url git@github.com:my-org/secret-svc.git
-./git-audit sync  --repo secret-svc --repo-url git@github.com:my-org/secret-svc.git --apply
+go run . audit --repo secret-svc --repo-url git@github.com:my-org/secret-svc.git
+go run . sync  --repo secret-svc --repo-url git@github.com:my-org/secret-svc.git --apply
 ```
 
 Ad-hoc repos default to: no Packagist check, a single `CHANGELOG.md` at the repo root, and no Go submodule filtering.
@@ -229,44 +229,54 @@ The built-in project list in `config/project/project.go` is tuned for the `preci
 
 ```bash
 # All projects
-./git-audit audit [--token TOKEN] [--fail-on-warning] [--exceptions PATH]
-./git-audit sync  [--token TOKEN] [--apply]
+go run . audit [--token TOKEN] [--fail-on-warning] [--exceptions PATH]
+go run . sync  [--token TOKEN] [--apply]
 
 # doctrine-type
-./git-audit audit --repo doctrine-type [--token TOKEN] [--fail-on-warning]
-./git-audit sync  --repo doctrine-type [--token TOKEN] [--apply]
+go run . audit --repo doctrine-type [--token TOKEN] [--fail-on-warning]
+go run . sync  --repo doctrine-type [--token TOKEN] [--apply]
 
 # doctrine-utility
-./git-audit audit --repo doctrine-utility [--token TOKEN] [--fail-on-warning]
-./git-audit sync  --repo doctrine-utility [--token TOKEN] [--apply]
+go run . audit --repo doctrine-utility [--token TOKEN] [--fail-on-warning]
+go run . sync  --repo doctrine-utility [--token TOKEN] [--apply]
 
 # symfony-console
-./git-audit audit --repo symfony-console [--token TOKEN] [--fail-on-warning]
-./git-audit sync  --repo symfony-console [--token TOKEN] [--apply]
+go run . audit --repo symfony-console [--token TOKEN] [--fail-on-warning]
+go run . sync  --repo symfony-console [--token TOKEN] [--apply]
 
 # symfony-doctrine-audit
-./git-audit audit --repo symfony-doctrine-audit [--token TOKEN] [--fail-on-warning]
-./git-audit sync  --repo symfony-doctrine-audit [--token TOKEN] [--apply]
+go run . audit --repo symfony-doctrine-audit [--token TOKEN] [--fail-on-warning]
+go run . sync  --repo symfony-doctrine-audit [--token TOKEN] [--apply]
 
 # symfony-doctrine-encrypt
-./git-audit audit --repo symfony-doctrine-encrypt [--token TOKEN] [--fail-on-warning]
-./git-audit sync  --repo symfony-doctrine-encrypt [--token TOKEN] [--apply]
-
-# symfony-json-form
-./git-audit audit --repo symfony-json-form [--token TOKEN] [--fail-on-warning]
-./git-audit sync  --repo symfony-json-form [--token TOKEN] [--apply]
+go run . audit --repo symfony-doctrine-encrypt [--token TOKEN] [--fail-on-warning]
+go run . sync  --repo symfony-doctrine-encrypt [--token TOKEN] [--apply]
 
 # symfony-phpunit
-./git-audit audit --repo symfony-phpunit [--token TOKEN] [--fail-on-warning]
-./git-audit sync  --repo symfony-phpunit [--token TOKEN] [--apply]
+go run . audit --repo symfony-phpunit [--token TOKEN] [--fail-on-warning]
+go run . sync  --repo symfony-phpunit [--token TOKEN] [--apply]
 
 # melody (resolves CHANGELOG.md + v2/CHANGELOG.md + v3/CHANGELOG.md)
-./git-audit audit --repo melody [--token TOKEN] [--fail-on-warning]
-./git-audit sync  --repo melody [--token TOKEN] [--apply]
+go run . audit --repo melody [--token TOKEN] [--fail-on-warning]
+go run . sync  --repo melody [--token TOKEN] [--apply]
 
-# git-audit (self-audit)
-./git-audit audit --repo git-audit [--token TOKEN] [--fail-on-warning]
-./git-audit sync  --repo git-audit [--token TOKEN] [--apply]
+# symfony-json-form
+go run . audit --repo symfony-json-form [--token TOKEN] [--fail-on-warning]
+go run . sync  --repo symfony-json-form [--token TOKEN] [--apply]
 ```
 
 Special-case config for melody (three changelogs, one per major version) and `GoSubmodule=true` (filters `integrations/*/vX.Y.Z` tags from core auditing) lives in `config/project/project.go` — use it as a template if your own project has a similar layout.
+
+#### All precision-soft repos in one shot
+
+`--repo` accepts a comma-separated list, so you can target the full precision-soft set (or any subset) in a single invocation:
+
+```bash
+# audit all precision-soft projects
+go run . audit --repo doctrine-type,doctrine-utility,symfony-console,symfony-doctrine-audit,symfony-doctrine-encrypt,symfony-json-form,symfony-phpunit,melody [--token TOKEN] [--fail-on-warning]
+
+# sync all precision-soft projects (dry-run by default; add --apply to PATCH)
+go run . sync  --repo doctrine-type,doctrine-utility,symfony-console,symfony-doctrine-audit,symfony-doctrine-encrypt,symfony-json-form,symfony-phpunit,melody [--token TOKEN] [--apply]
+```
+
+Omitting `--repo` entirely is equivalent — it targets every project in `config/project/project.go`. Use the comma-separated form when you want a specific subset (e.g. `--repo doctrine-type,doctrine-utility`). `--repo-url` is only valid with a single `--repo` value.

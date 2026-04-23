@@ -39,6 +39,7 @@ var (
     changelogDatedTitledHeading = regexp.MustCompile(`(?m)^##\s+\[(v\d+\.\d+\.\d+)\]\s+-\s+(\d{4}-\d{2}-\d{2})\s+-\s+(.+?)\s*$`)
     changelogDatedHeading       = regexp.MustCompile(`(?m)^##\s+\[(v\d+\.\d+\.\d+)\]\s+-\s+(\d{4}-\d{2}-\d{2})\s*$`)
     changelogCompareLink        = regexp.MustCompile(`(?m)^\[(v\d+\.\d+\.\d+)\]:\s*https?://\S+/compare/\S+`)
+    changelogLinkReferenceLine  = regexp.MustCompile(`^\[[^\]]+\]:\s+\S+`)
     shaHexRegex                 = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
 
     standardSections = map[string]bool{
@@ -103,7 +104,7 @@ func (command *AuditCommand) Flags() []clicontract.Flag {
             },
             &clicontract.StringFlag{
                 Name:  flagRepo,
-                Usage: "filter by repo name (e.g. doctrine-utility)",
+                Usage: "filter by repo name; comma-separated for multiple (e.g. doctrine-utility or doctrine-type,doctrine-utility)",
                 Value: "",
             },
             &clicontract.StringFlag{
@@ -153,6 +154,9 @@ func (command *AuditCommand) Run(
         return resolveErr
     }
     option := output.NormalizeOption(output.ParseOptionFromCommand(commandContext))
+    if 1 > option.TableMaxWidth {
+        option.TableMaxWidth = autoTableMaxWidth()
+    }
 
     audits := auditProjectsParallel(githubClient, projects, auditParallelism)
 
@@ -878,7 +882,31 @@ func auditPresentation(
         result.Issues = append(result.Issues, fmt.Sprintf("non-standard section: %s", section))
     }
 
+    if true == hasTrailingChangelogLinkReferences(body) {
+        result.Status = maxLevelStatus(result.Status, types.LevelWarning)
+        result.Issues = append(result.Issues,
+            "release body ends with markdown link reference definitions (e.g. `[vX.Y.Z]: https://.../compare/...`) — "+
+                "these belong at the bottom of CHANGELOG.md, not in the release notes",
+        )
+    }
+
     return result
+}
+
+func hasTrailingChangelogLinkReferences(body string) bool {
+    trimmed := strings.TrimSpace(body)
+    if "" == trimmed {
+        return false
+    }
+    lines := strings.Split(trimmed, "\n")
+    for index := len(lines) - 1; index >= 0; index-- {
+        line := strings.TrimSpace(lines[index])
+        if "" == line {
+            continue
+        }
+        return changelogLinkReferenceLine.MatchString(line)
+    }
+    return false
 }
 
 func deriveProjectName(repository string) string {
@@ -1397,7 +1425,7 @@ func extractChangelogEntry(content string, version string) (string, bool) {
                 end = matchIndexes[matchIndex+1][0]
             }
 
-            return strings.TrimSpace(content[start:end]), true
+            return stripTrailingLinkReferences(strings.TrimSpace(content[start:end])), true
         }
     }
 
@@ -1415,11 +1443,41 @@ func extractChangelogEntry(content string, version string) (string, bool) {
                 end = matchIndexes[matchIndex+1][0]
             }
 
-            return strings.TrimSpace(content[start:end]), true
+            return stripTrailingLinkReferences(strings.TrimSpace(content[start:end])), true
         }
     }
 
     return "", false
+}
+
+/**
+ * stripTrailingLinkReferences drops trailing markdown link reference
+ * definitions (e.g. `[v1.0.0]: https://.../compare/...`) from an extracted
+ * changelog body. The last version's section otherwise absorbs the global
+ * reference block that typically sits at the bottom of a CHANGELOG.md, since
+ * extractChangelogEntry has no next heading to use as a stop boundary.
+ */
+func stripTrailingLinkReferences(body string) string {
+    if "" == body {
+        return body
+    }
+
+    lines := strings.Split(body, "\n")
+    cutoff := len(lines)
+    for index := len(lines) - 1; index >= 0; index-- {
+        trimmed := strings.TrimSpace(lines[index])
+        if "" == trimmed {
+            cutoff = index
+            continue
+        }
+        if true == changelogLinkReferenceLine.MatchString(trimmed) {
+            cutoff = index
+            continue
+        }
+        break
+    }
+
+    return strings.TrimSpace(strings.Join(lines[:cutoff], "\n"))
 }
 
 func skipRestOfHeadingLine(content string, start int) int {

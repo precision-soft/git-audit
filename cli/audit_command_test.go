@@ -105,6 +105,37 @@ func TestExtractChangelogEntryStripsHeadingTail(t *testing.T) {
     }
 }
 
+func TestExtractChangelogEntryStripsTrailingLinkReferences(t *testing.T) {
+    content := "# Changelog\n\n" +
+        "## [v2.0.0] - 2026-03-01 - Big Refactor\n\n" +
+        "### Changed\n\n- Big change\n\n" +
+        "## [v1.0.0] - 2025-12-01 - Initial release\n\n" +
+        "### Added\n\n- Initial release\n\n" +
+        "[Unreleased]: https://github.com/example/repo/compare/v2.0.0...HEAD\n\n" +
+        "[v2.0.0]: https://github.com/example/repo/compare/v1.0.0...v2.0.0\n\n" +
+        "[v1.0.0]: https://github.com/example/repo/releases/tag/v1.0.0\n"
+
+    body, found := extractChangelogEntry(content, "v1.0.0")
+    if false == found {
+        t.Fatalf("expected to find v1.0.0 entry")
+    }
+    if true == strings.Contains(body, "[Unreleased]:") {
+        t.Errorf("v1.0.0 body should not absorb [Unreleased] link ref, got %q", body)
+    }
+    if true == strings.Contains(body, "[v2.0.0]:") {
+        t.Errorf("v1.0.0 body should not absorb [v2.0.0] link ref, got %q", body)
+    }
+    if true == strings.Contains(body, "[v1.0.0]:") {
+        t.Errorf("v1.0.0 body should not absorb its own [v1.0.0] link ref, got %q", body)
+    }
+    if false == strings.Contains(body, "Initial release") {
+        t.Errorf("v1.0.0 body should still contain the actual content, got %q", body)
+    }
+    if false == strings.HasSuffix(strings.TrimSpace(body), "- Initial release") {
+        t.Errorf("v1.0.0 body should end at the last content bullet, got %q", body)
+    }
+}
+
 func TestExtractChangelogEntryHandlesV1HeadingFormat(t *testing.T) {
     content := "# Changelog\n\n" +
         "## v1.0.0\n\n" +
@@ -116,6 +147,53 @@ func TestExtractChangelogEntryHandlesV1HeadingFormat(t *testing.T) {
     }
     if false == strings.HasPrefix(body, "### Added") {
         t.Errorf("body should start at the first section heading, got %q", body)
+    }
+}
+
+func TestAuditPresentationFlagsTrailingLinkReferences(t *testing.T) {
+    body := "## Added\n\n" +
+        "- Initial public release\n\n" +
+        "[Unreleased]: https://github.com/example/repo/compare/v2.0.0...HEAD\n\n" +
+        "[v2.0.0]: https://github.com/example/repo/compare/v1.0.0...v2.0.0\n\n" +
+        "[v1.0.0]: https://github.com/example/repo/releases/tag/v1.0.0\n"
+
+    result := auditPresentation("Symfony PHPUnit", "v1.0.0", "Symfony PHPUnit v1.0.0 - Initial release", body)
+
+    if types.LevelWarning != result.Status {
+        t.Fatalf("expected warning for trailing link refs, got status=%v issues=%v", result.Status, result.Issues)
+    }
+
+    foundLinkRefIssue := false
+    for _, issue := range result.Issues {
+        if true == strings.Contains(issue, "trailing") || true == strings.Contains(issue, "link reference") {
+            foundLinkRefIssue = true
+            break
+        }
+    }
+    if false == foundLinkRefIssue {
+        t.Errorf("expected a trailing link-reference issue, got %v", result.Issues)
+    }
+}
+
+func TestAuditPresentationCleanBodyHasNoLinkRefIssue(t *testing.T) {
+    body := "## Added\n\n- Initial public release\n"
+
+    result := auditPresentation("Symfony PHPUnit", "v1.0.0", "Symfony PHPUnit v1.0.0 - Initial release", body)
+
+    for _, issue := range result.Issues {
+        if true == strings.Contains(issue, "link reference") {
+            t.Errorf("clean body should not emit a link-reference issue, got %q", issue)
+        }
+    }
+}
+
+func TestHasTrailingChangelogLinkReferencesSkipsMidBody(t *testing.T) {
+    body := "## Added\n\n" +
+        "- See [v1.0.0]: https://example.com for details\n" +
+        "- another bullet\n"
+
+    if true == hasTrailingChangelogLinkReferences(body) {
+        t.Errorf("link-like text inside a bullet should not trigger trailing-refs detection: %q", body)
     }
 }
 
