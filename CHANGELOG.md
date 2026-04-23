@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2026-04-23
+
+### Fixed
+
+- `classifyDiff()` — false positive "release has no code changes" on monorepo multi-version tags. When the semver-predecessor tag is chronologically newer than the tag under audit (e.g. `v1.12.0 → v2.0.0` where `v2.0.0` was committed before `v1.12.0`), `git diff v1.12.0...v2.0.0` returns empty because `v2.0.0` is an ancestor of `v1.12.0`. The GitHub compare API returns `status="behind"` in this case; the diff check now returns `LevelNotApplicable` instead of failing. Lock-step releases (`status="identical"`) continue to be flagged as expected.
+
+### Changed
+
+- `service.CompareResponse` — added `Status string`, `AheadBy int`, `BehindBy int` fields from the GitHub compare API response so callers can distinguish direction from emptiness
+- `auditDiff()` — classification logic extracted into `classifyDiff()` pure helper for testability
+
+### Added
+
+- `TestClassifyDiffBehindIsNotApplicable`, `TestClassifyDiffIdenticalIsNoCodeChanges`, `TestClassifyDiffNormalAheadIsOk` — unit coverage for the three comparison-direction branches
+
 ## 2026-04-20
 
 ### Fixed

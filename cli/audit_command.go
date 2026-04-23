@@ -777,6 +777,45 @@ func fetchChangelogSources(
     return sources
 }
 
+func classifyDiff(
+    compareResponse *service.CompareResponse,
+    previousTagName string,
+    release *service.GithubRelease,
+) DiffAuditResult {
+    changedFiles := make([]string, 0, len(compareResponse.Files))
+    for _, file := range compareResponse.Files {
+        changedFiles = append(changedFiles, file.Filename)
+    }
+
+    result := DiffAuditResult{
+        Status:       types.LevelOk,
+        PreviousTag:  previousTagName,
+        CommitCount:  compareResponse.TotalCommits,
+        ChangedFiles: changedFiles,
+    }
+
+    if 0 == compareResponse.TotalCommits {
+        if "behind" == compareResponse.Status {
+            return DiffAuditResult{
+                Status:      types.LevelNotApplicable,
+                PreviousTag: previousTagName,
+            }
+        }
+        result.Status = types.LevelFailed
+        result.Issues = append(result.Issues, "release has no code changes compared to previous tag")
+    }
+
+    if nil != release {
+        normalizedBody := normalizeMarkdownBlock(release.Body)
+        if compareResponse.TotalCommits >= 3 && "" == normalizedBody {
+            result.Status = maxLevelStatus(result.Status, types.LevelWarning)
+            result.Issues = append(result.Issues, "release notes are empty for a non-trivial diff")
+        }
+    }
+
+    return result
+}
+
 func auditDiff(
     client *service.GithubClient,
     organization string,
@@ -803,32 +842,7 @@ func auditDiff(
         }
     }
 
-    changedFiles := make([]string, 0, len(compareResponse.Files))
-    for _, file := range compareResponse.Files {
-        changedFiles = append(changedFiles, file.Filename)
-    }
-
-    result := DiffAuditResult{
-        Status:       types.LevelOk,
-        PreviousTag:  previousTagName,
-        CommitCount:  compareResponse.TotalCommits,
-        ChangedFiles: changedFiles,
-    }
-
-    if 0 == compareResponse.TotalCommits {
-        result.Status = types.LevelFailed
-        result.Issues = append(result.Issues, "release has no code changes compared to previous tag")
-    }
-
-    if nil != release {
-        normalizedBody := normalizeMarkdownBlock(release.Body)
-        if compareResponse.TotalCommits >= 3 && "" == normalizedBody {
-            result.Status = maxLevelStatus(result.Status, types.LevelWarning)
-            result.Issues = append(result.Issues, "release notes are empty for a non-trivial diff")
-        }
-    }
-
-    return result
+    return classifyDiff(compareResponse, previousTagName, release)
 }
 
 func auditPresentation(

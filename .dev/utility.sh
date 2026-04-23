@@ -371,6 +371,43 @@ ensure_docker_env_files() {
         info "creating .env.local"
         touch "${MELODY_DOCKER_ENV_LOCAL_FILE_PATH}"
     fi
+
+    ensure_dev_data_host_files
+}
+
+# Bind-mounted files (e.g. .dev-data/bash/.bash_history) must exist on the host
+# as regular files before docker compose up. If missing, Docker auto-creates a
+# directory at that path, which silently breaks features like bash history
+# persistence. This converts any wrong-typed host path back to an empty file.
+ensure_dev_data_host_files() {
+    local DEV_DATA_FILE_PATH_LIST=(
+        "${ROOT_DIR}/.dev-data/bash/.bash_history"
+    )
+
+    local DEV_DATA_FILE_PATH_STRING
+    for DEV_DATA_FILE_PATH_STRING in "${DEV_DATA_FILE_PATH_LIST[@]}"; do
+        local PARENT_DIRECTORY_PATH_STRING
+        PARENT_DIRECTORY_PATH_STRING="$(dirname "${DEV_DATA_FILE_PATH_STRING}")"
+
+        if [[ -d "${PARENT_DIRECTORY_PATH_STRING}" ]]; then
+            :
+        else
+            mkdir -p "${PARENT_DIRECTORY_PATH_STRING}"
+        fi
+
+        if [[ -d "${DEV_DATA_FILE_PATH_STRING}" ]]; then
+            info "converting ${DEV_DATA_FILE_PATH_STRING} from directory to file"
+            rm -rf "${DEV_DATA_FILE_PATH_STRING}"
+            touch "${DEV_DATA_FILE_PATH_STRING}"
+            continue
+        fi
+
+        if [[ -f "${DEV_DATA_FILE_PATH_STRING}" ]]; then
+            continue
+        fi
+
+        touch "${DEV_DATA_FILE_PATH_STRING}"
+    done
 }
 
 docker_print_command() {

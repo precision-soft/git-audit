@@ -4,6 +4,7 @@ import (
     "strings"
     "testing"
 
+    "github.com/precision-soft/git-audit/service"
     "github.com/precision-soft/git-audit/types"
 )
 
@@ -214,6 +215,60 @@ func TestTitlePartsRegex(t *testing.T) {
         if got != testCase.want {
             t.Errorf("titlePartsRegex(%q) = %v, want %v", testCase.title, got, testCase.want)
         }
+    }
+}
+
+func TestClassifyDiffBehindIsNotApplicable(t *testing.T) {
+    response := &service.CompareResponse{
+        Status:       "behind",
+        TotalCommits: 0,
+    }
+
+    result := classifyDiff(response, "v1.12.0", nil)
+
+    if types.LevelNotApplicable != result.Status {
+        t.Fatalf("expected LevelNotApplicable for behind comparison, got %v (issues: %v)", result.Status, result.Issues)
+    }
+    if 0 != len(result.Issues) {
+        t.Errorf("expected no issues for behind comparison, got %v", result.Issues)
+    }
+}
+
+func TestClassifyDiffIdenticalIsNoCodeChanges(t *testing.T) {
+    response := &service.CompareResponse{
+        Status:       "identical",
+        TotalCommits: 0,
+    }
+
+    result := classifyDiff(response, "v1.9.0", nil)
+
+    if types.LevelFailed != result.Status {
+        t.Fatalf("expected LevelFailed for identical comparison (lock-step), got %v", result.Status)
+    }
+    if 1 != len(result.Issues) || false == strings.Contains(result.Issues[0], "no code changes") {
+        t.Errorf("expected 'no code changes' issue, got %v", result.Issues)
+    }
+}
+
+func TestClassifyDiffNormalAheadIsOk(t *testing.T) {
+    response := &service.CompareResponse{
+        Status:       "ahead",
+        TotalCommits: 3,
+        Files: []service.CompareFile{
+            {Filename: "application/application_http.go", Status: "modified"},
+        },
+    }
+
+    result := classifyDiff(response, "v1.11.0", nil)
+
+    if types.LevelOk != result.Status {
+        t.Fatalf("expected LevelOk for normal ahead comparison, got %v (issues: %v)", result.Status, result.Issues)
+    }
+    if 3 != result.CommitCount {
+        t.Errorf("expected CommitCount=3, got %d", result.CommitCount)
+    }
+    if 1 != len(result.ChangedFiles) {
+        t.Errorf("expected 1 changed file, got %v", result.ChangedFiles)
     }
 }
 

@@ -48,6 +48,9 @@ type CompareCommit struct {
 }
 
 type CompareResponse struct {
+    Status       string          `json:"status"`
+    AheadBy      int             `json:"ahead_by"`
+    BehindBy     int             `json:"behind_by"`
     TotalCommits int             `json:"total_commits"`
     Commits      []CompareCommit `json:"commits"`
     Files        []CompareFile   `json:"files"`
