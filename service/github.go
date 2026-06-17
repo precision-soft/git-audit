@@ -235,7 +235,7 @@ func (instance *GithubClient) CompareTags(organization, repository, base, head s
 
     var compareResponse CompareResponse
     if decodeErr := json.Unmarshal(response.Body(), &compareResponse); nil != decodeErr {
-        return nil, decodeErr
+        return nil, fmt.Errorf("parse compare response for %s/%s %s...%s: %w", organization, repository, base, head, decodeErr)
     }
 
     return &compareResponse, nil

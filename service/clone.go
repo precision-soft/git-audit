@@ -21,6 +21,9 @@ func EnsureCloneReset(name, repositoryUrl string) (string, error) {
     if "" == name {
         return "", fmt.Errorf("clone name is required")
     }
+    if strings.ContainsAny(name, "/\\") || strings.Contains(name, "..") {
+        return "", fmt.Errorf("invalid clone name %q: must not contain path separators or %q", name, "..")
+    }
     if "" == repositoryUrl {
         return "", fmt.Errorf("repo url is required for %q", name)
     }

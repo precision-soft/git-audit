@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2026-06-17
+
+### Fixed
+
+- `semverParts()` — a pre-release or build-metadata suffix (e.g. `v1.2.3-rc1`, `v1.2.3+build`) is now stripped before parsing the patch segment; previously `strconv.Atoi("3-rc1")` failed and silently zeroed the segment, so `v1.2.3-rc1` compared as `1.2.0`
+- `stripTrailingLinkReferences()` — the trailing-link matcher now requires an `http(s)://` URL, so a section ending in a non-URL markdown reference definition (e.g. `[ticket]: ABC-123`) is no longer stripped from the extracted release body
+- `EnsureCloneReset()` — clone names containing path separators or `..` are now rejected, preventing a malformed project URL from writing outside `.dev-data/clones`
+- `CompareTags()` — the JSON decode error is now wrapped with the org/repo and compared refs for context
+- `compareSemver()` — when numeric versions are equal a pre-release tag now ranks below its final release (`v1.0.0-rc1 < v1.0.0`) per semver precedence; the previous raw string fallback ranked the longer `-rc1` string as greater, skewing "latest version" selection when pre-release tags exist
+
+### Added
+
+- `TestSemverPartsStripsPreReleaseAndBuild`, `TestCompareSemverIsNumericNotLexicographic`, `TestCompareSemverPreReleaseRanksBelowFinal`, `TestStripTrailingLinkReferencesDropsCompareLinks`, `TestStripTrailingLinkReferencesKeepsNonUrlReference` — unit coverage for the parsing fixes
+- `TestEnsureCloneResetRejectsInvalidInput` (clone-name/url validation, incl. the path-traversal guard), `TestShouldRetryStatus` (retry status policy), `TestAutoTableMaxWidthUnlimitedWhenNotTerminal` (non-terminal width), and `TestGetPackagistPackageVersions*` (packagist payload parsing, dist-reference fallback, missing-package and non-2xx errors) — the last via a dependency-free `fakeHttpClient`/`fakeResponse` test double
+
 ## 2026-04-23
 
 ### Fixed

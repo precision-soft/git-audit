@@ -126,3 +126,75 @@ func TestResolveChangelogPathsEmptySliceUsesDefault(t *testing.T) {
         t.Errorf("empty ChangelogPaths should fall back to default, got %v", got)
     }
 }
+
+func TestSemverPartsStripsPreReleaseAndBuild(t *testing.T) {
+    cases := []struct {
+        tag  string
+        want [3]int
+    }{
+        {"v1.2.3", [3]int{1, 2, 3}},
+        {"1.2.3", [3]int{1, 2, 3}},
+        {"v1.2.3-rc1", [3]int{1, 2, 3}},
+        {"v1.2.3+build.5", [3]int{1, 2, 3}},
+        {"sub/v2.3.4", [3]int{2, 3, 4}},
+    }
+
+    for _, testCase := range cases {
+        got := semverParts(testCase.tag)
+        if got != testCase.want {
+            t.Errorf("semverParts(%q) = %v, want %v", testCase.tag, got, testCase.want)
+        }
+    }
+}
+
+func TestCompareSemverIsNumericNotLexicographic(t *testing.T) {
+    if -1 != compareSemver("v1.2.0", "v1.10.0") {
+        t.Errorf("expected v1.2.0 < v1.10.0 (numeric), got %d", compareSemver("v1.2.0", "v1.10.0"))
+    }
+    if 0 != compareSemver("v1.2.3-rc1", "v1.2.3-rc1") {
+        t.Errorf("expected identical tags to compare equal")
+    }
+}
+
+func TestCompareSemverPreReleaseRanksBelowFinal(t *testing.T) {
+    testCases := []struct {
+        left  string
+        right string
+        want  int
+    }{
+        {"v1.0.0", "v1.0.0-rc1", 1},
+        {"v1.0.0-rc1", "v1.0.0", -1},
+        {"v1.0.0-rc1", "v1.0.0-rc2", -1},
+        {"v1.0.0-rc2", "v1.0.0-rc1", 1},
+        {"v1.0.0-rc1", "v1.0.0-rc1", 0},
+        {"v2.0.0-rc1", "v1.0.0", 1},
+    }
+    for _, testCase := range testCases {
+        if got := compareSemver(testCase.left, testCase.right); got != testCase.want {
+            t.Errorf("compareSemver(%q, %q) = %d, want %d", testCase.left, testCase.right, got, testCase.want)
+        }
+    }
+}
+
+func TestStripTrailingLinkReferencesDropsCompareLinks(t *testing.T) {
+    body := "### Fixed\n\n- something\n\n[v1.0.0]: https://github.com/org/repo/compare/v0.9.0...v1.0.0"
+
+    got := stripTrailingLinkReferences(body)
+
+    if true == strings.Contains(got, "compare") {
+        t.Errorf("expected trailing compare link to be stripped, got %q", got)
+    }
+    if false == strings.Contains(got, "- something") {
+        t.Errorf("expected body content to be preserved, got %q", got)
+    }
+}
+
+func TestStripTrailingLinkReferencesKeepsNonUrlReference(t *testing.T) {
+    body := "### Fixed\n\n- done\n\n[ticket]: ABC-123"
+
+    got := stripTrailingLinkReferences(body)
+
+    if false == strings.Contains(got, "ABC-123") {
+        t.Errorf("expected non-URL reference definition to be preserved, got %q", got)
+    }
+}

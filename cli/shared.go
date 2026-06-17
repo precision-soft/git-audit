@@ -18,7 +18,7 @@ var (
     goSubmoduleTagRegex        = regexp.MustCompile(`^.+/v\d+\.\d+\.\d+$`)
     changelogHeadingV2         = regexp.MustCompile(`(?m)^##\s+\[(v\d+\.\d+\.\d+)\]`)
     changelogHeadingV1         = regexp.MustCompile(`(?m)^##\s+(v\d+\.\d+\.\d+)`)
-    changelogLinkReferenceLine = regexp.MustCompile(`^\[[^\]]+\]:\s+\S+`)
+    changelogLinkReferenceLine = regexp.MustCompile(`^\[[^\]]+\]:\s+https?://\S+`)
 )
 
 func resolveGithubClient(
@@ -205,6 +205,27 @@ func compareSemver(left, right string) int {
             return 1
         }
     }
+
+    /*
+     * Equal numeric triples: per semver a pre-release (e.g. v1.0.0-rc1) ranks
+     * lower than its final release (v1.0.0). A raw string compare would do the
+     * opposite (the longer "-rc1" string sorts greater), so handle the
+     * pre-release segment explicitly before falling back to lexical order.
+     */
+    leftPrerelease := semverPrerelease(left)
+    rightPrerelease := semverPrerelease(right)
+    switch {
+    case "" == leftPrerelease && "" != rightPrerelease:
+        return 1
+    case "" != leftPrerelease && "" == rightPrerelease:
+        return -1
+    case leftPrerelease != rightPrerelease:
+        if leftPrerelease < rightPrerelease {
+            return -1
+        }
+        return 1
+    }
+
     if left < right {
         return -1
     }
@@ -214,10 +235,27 @@ func compareSemver(left, right string) int {
     return 0
 }
 
+func semverPrerelease(tag string) string {
+    trimmed := strings.TrimPrefix(tag, "v")
+    if slashIndex := strings.LastIndex(trimmed, "/v"); slashIndex >= 0 {
+        trimmed = trimmed[slashIndex+2:]
+    }
+    if plusIndex := strings.IndexByte(trimmed, '+'); plusIndex >= 0 {
+        trimmed = trimmed[:plusIndex]
+    }
+    if dashIndex := strings.IndexByte(trimmed, '-'); dashIndex >= 0 {
+        return trimmed[dashIndex+1:]
+    }
+    return ""
+}
+
 func semverParts(tag string) [3]int {
     trimmed := strings.TrimPrefix(tag, "v")
     if slashIndex := strings.LastIndex(trimmed, "/v"); slashIndex >= 0 {
         trimmed = trimmed[slashIndex+2:]
+    }
+    if suffixIndex := strings.IndexAny(trimmed, "-+"); suffixIndex >= 0 {
+        trimmed = trimmed[:suffixIndex]
     }
     var parts [3]int
     for index, segment := range strings.SplitN(trimmed, ".", 3) {
