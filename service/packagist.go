@@ -3,7 +3,6 @@ package service
 import (
     "encoding/json"
     "fmt"
-    "io"
     "net/http"
     "strings"
 )
@@ -32,28 +31,17 @@ var packagistClient = newHttpClient()
 func GetPackagistPackageVersions(packageName string) ([]PackagistVersion, error) {
     url := fmt.Sprintf("https://repo.packagist.org/p2/%s.json", packageName)
 
-    request, requestErr := http.NewRequest(http.MethodGet, url, nil)
-    if nil != requestErr {
-        return nil, requestErr
-    }
-
-    response, doErr := doWithRetry(packagistClient, request)
+    response, doErr := requestWithRetry(packagistClient, http.MethodGet, url)
     if nil != doErr {
         return nil, doErr
     }
-    defer response.Body.Close()
 
-    body, readErr := io.ReadAll(response.Body)
-    if nil != readErr {
-        return nil, readErr
-    }
-
-    if response.StatusCode < 200 || response.StatusCode >= 300 {
-        return nil, fmt.Errorf("http %d: %s", response.StatusCode, string(body))
+    if response.StatusCode() < 200 || response.StatusCode() >= 300 {
+        return nil, fmt.Errorf("http %d: %s", response.StatusCode(), string(response.Body()))
     }
 
     var result packagistResponse
-    if unmarshalErr := json.Unmarshal(body, &result); nil != unmarshalErr {
+    if unmarshalErr := json.Unmarshal(response.Body(), &result); nil != unmarshalErr {
         return nil, unmarshalErr
     }
 

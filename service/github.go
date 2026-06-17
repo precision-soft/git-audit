@@ -3,12 +3,14 @@ package service
 import (
     "encoding/json"
     "fmt"
-    "io"
     "net/http"
     "strconv"
     "strings"
     "sync"
     "time"
+
+    "github.com/precision-soft/melody/v3/httpclient"
+    httpclientcontract "github.com/precision-soft/melody/v3/httpclient/contract"
 )
 
 const githubApiBase = "https://api.github.com"
@@ -58,9 +60,21 @@ type CompareResponse struct {
 
 type GithubClient struct {
     token        string
-    httpClient   *http.Client
+    httpClient   httpclientcontract.Client
     rateLimit    RateLimitInfo
     rateLimitMux sync.Mutex
+}
+
+/**
+ * githubApiHeaders returns the headers shared by the api.github.com JSON endpoints.
+ */
+func githubApiHeaders() map[string]string {
+    return map[string]string{
+        "Accept":               "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "Cache-Control":        "no-cache, no-store",
+        "Pragma":               "no-cache",
+    }
 }
 
 func NewGithubClient(token string) *GithubClient {
@@ -70,19 +84,20 @@ func NewGithubClient(token string) *GithubClient {
     }
 }
 
-func (client *GithubClient) RateLimit() RateLimitInfo {
-    client.rateLimitMux.Lock()
-    defer client.rateLimitMux.Unlock()
-    return client.rateLimit
+func (instance *GithubClient) RateLimit() RateLimitInfo {
+    instance.rateLimitMux.Lock()
+    defer instance.rateLimitMux.Unlock()
+    return instance.rateLimit
 }
 
 /**
  * recordRateLimit tracks the minimum Remaining seen across all responses
  * (= peak usage). Prior last-wins behavior overstated headroom.
  */
-func (client *GithubClient) recordRateLimit(response *http.Response) {
-    limit := response.Header.Get("X-RateLimit-Limit")
-    remaining := response.Header.Get("X-RateLimit-Remaining")
+func (instance *GithubClient) recordRateLimit(response httpclientcontract.Response) {
+    headers := response.Headers()
+    limit := headers.Get("X-RateLimit-Limit")
+    remaining := headers.Get("X-RateLimit-Remaining")
     if "" == limit && "" == remaining {
         return
     }
@@ -94,19 +109,19 @@ func (client *GithubClient) recordRateLimit(response *http.Response) {
     if parsed, parseErr := strconv.Atoi(remaining); nil == parseErr {
         info.Remaining = parsed
     }
-    if parsed, parseErr := strconv.Atoi(response.Header.Get("X-RateLimit-Used")); nil == parseErr {
+    if parsed, parseErr := strconv.Atoi(headers.Get("X-RateLimit-Used")); nil == parseErr {
         info.Used = parsed
     }
-    if parsed, parseErr := strconv.ParseInt(response.Header.Get("X-RateLimit-Reset"), 10, 64); nil == parseErr {
+    if parsed, parseErr := strconv.ParseInt(headers.Get("X-RateLimit-Reset"), 10, 64); nil == parseErr {
         info.Reset = time.Unix(parsed, 0)
     }
-    info.Resource = response.Header.Get("X-RateLimit-Resource")
+    info.Resource = headers.Get("X-RateLimit-Resource")
 
-    client.rateLimitMux.Lock()
-    defer client.rateLimitMux.Unlock()
+    instance.rateLimitMux.Lock()
+    defer instance.rateLimitMux.Unlock()
 
-    if false == client.rateLimit.HasData || info.Remaining < client.rateLimit.Remaining {
-        client.rateLimit = info
+    if false == instance.rateLimit.HasData || info.Remaining < instance.rateLimit.Remaining {
+        instance.rateLimit = info
     }
 }
 
@@ -117,14 +132,14 @@ type githubTagApiResponse struct {
     } `json:"commit"`
 }
 
-func (client *GithubClient) GetTags(organization, repository string) ([]GithubTag, error) {
+func (instance *GithubClient) GetTags(organization, repository string) ([]GithubTag, error) {
     var all []GithubTag
 
     for page := 1; ; page++ {
         url := fmt.Sprintf("%s/repos/%s/%s/tags?per_page=%d&page=%d", githubApiBase, organization, repository, perPage, page)
 
         var batch []githubTagApiResponse
-        if getErr := client.get(url, &batch); nil != getErr {
+        if getErr := instance.get(url, &batch); nil != getErr {
             return nil, fmt.Errorf("page %d: %w", page, getErr)
         }
 
@@ -143,14 +158,14 @@ func (client *GithubClient) GetTags(organization, repository string) ([]GithubTa
     return all, nil
 }
 
-func (client *GithubClient) GetReleases(organization, repository string) ([]GithubRelease, error) {
+func (instance *GithubClient) GetReleases(organization, repository string) ([]GithubRelease, error) {
     var all []GithubRelease
 
     for page := 1; ; page++ {
         url := fmt.Sprintf("%s/repos/%s/%s/releases?per_page=%d&page=%d", githubApiBase, organization, repository, perPage, page)
 
         var batch []GithubRelease
-        if getErr := client.get(url, &batch); nil != getErr {
+        if getErr := instance.get(url, &batch); nil != getErr {
             return nil, fmt.Errorf("page %d: %w", page, getErr)
         }
 
@@ -164,7 +179,7 @@ func (client *GithubClient) GetReleases(organization, repository string) ([]Gith
     return all, nil
 }
 
-func (client *GithubClient) GetFileContentAtRef(organization, repository, path, ref string) (string, error) {
+func (instance *GithubClient) GetFileContentAtRef(organization, repository, path, ref string) (string, error) {
     endpoint := fmt.Sprintf(
         "https://raw.githubusercontent.com/%s/%s/%s/%s",
         organization,
@@ -173,35 +188,24 @@ func (client *GithubClient) GetFileContentAtRef(organization, repository, path, 
         path,
     )
 
-    request, requestErr := http.NewRequest(http.MethodGet, endpoint, nil)
-    if nil != requestErr {
-        return "", requestErr
+    var options []httpclientcontract.RequestOption
+    if "" != strings.TrimSpace(instance.token) {
+        options = append(options, httpclient.WithBearerToken(instance.token))
     }
 
-    if "" != strings.TrimSpace(client.token) {
-        request.Header.Set("Authorization", "Bearer "+client.token)
-    }
-
-    response, doErr := doWithRetry(client.httpClient, request)
+    response, doErr := requestWithRetry(instance.httpClient, http.MethodGet, endpoint, options...)
     if nil != doErr {
         return "", doErr
     }
-    defer response.Body.Close()
 
-    if http.StatusOK != response.StatusCode {
-        responseBody, _ := io.ReadAll(response.Body)
-        return "", fmt.Errorf("http %d: %s", response.StatusCode, string(responseBody))
+    if http.StatusOK != response.StatusCode() {
+        return "", fmt.Errorf("http %d: %s", response.StatusCode(), string(response.Body()))
     }
 
-    bodyBytes, readErr := io.ReadAll(response.Body)
-    if nil != readErr {
-        return "", readErr
-    }
-
-    return string(bodyBytes), nil
+    return string(response.Body()), nil
 }
 
-func (client *GithubClient) CompareTags(organization, repository, base, head string) (*CompareResponse, error) {
+func (instance *GithubClient) CompareTags(organization, repository, base, head string) (*CompareResponse, error) {
     endpoint := fmt.Sprintf(
         "%s/repos/%s/%s/compare/%s...%s",
         githubApiBase,
@@ -211,115 +215,85 @@ func (client *GithubClient) CompareTags(organization, repository, base, head str
         head,
     )
 
-    request, requestErr := http.NewRequest(http.MethodGet, endpoint, nil)
-    if nil != requestErr {
-        return nil, requestErr
+    options := []httpclientcontract.RequestOption{
+        httpclient.WithHeaders(githubApiHeaders()),
+    }
+    if "" != strings.TrimSpace(instance.token) {
+        options = append(options, httpclient.WithBearerToken(instance.token))
     }
 
-    request.Header.Set("Accept", "application/vnd.github+json")
-    request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-    request.Header.Set("Cache-Control", "no-cache, no-store")
-    request.Header.Set("Pragma", "no-cache")
-
-    if "" != strings.TrimSpace(client.token) {
-        request.Header.Set("Authorization", "Bearer "+client.token)
-    }
-
-    response, doErr := doWithRetry(client.httpClient, request)
+    response, doErr := requestWithRetry(instance.httpClient, http.MethodGet, endpoint, options...)
     if nil != doErr {
         return nil, doErr
     }
-    defer response.Body.Close()
 
-    client.recordRateLimit(response)
+    instance.recordRateLimit(response)
 
-    if http.StatusOK != response.StatusCode {
-        responseBody, _ := io.ReadAll(response.Body)
-        return nil, fmt.Errorf("http %d: %s", response.StatusCode, string(responseBody))
+    if http.StatusOK != response.StatusCode() {
+        return nil, fmt.Errorf("http %d: %s", response.StatusCode(), string(response.Body()))
     }
 
     var compareResponse CompareResponse
-    if decodeErr := json.NewDecoder(response.Body).Decode(&compareResponse); nil != decodeErr {
+    if decodeErr := json.Unmarshal(response.Body(), &compareResponse); nil != decodeErr {
         return nil, decodeErr
     }
 
     return &compareResponse, nil
 }
 
-func (client *GithubClient) UpdateRelease(organization, repository string, releaseId int64, body, name string) error {
-    if "" == strings.TrimSpace(client.token) {
+func (instance *GithubClient) UpdateRelease(organization, repository string, releaseId int64, body, name string) error {
+    if "" == strings.TrimSpace(instance.token) {
         return fmt.Errorf("github token required to update release")
     }
 
     endpoint := fmt.Sprintf("%s/repos/%s/%s/releases/%d", githubApiBase, organization, repository, releaseId)
 
-    payload, marshalErr := json.Marshal(struct {
+    payload := struct {
         Body string `json:"body"`
         Name string `json:"name,omitempty"`
-    }{Body: body, Name: name})
-    if nil != marshalErr {
-        return marshalErr
+    }{Body: body, Name: name}
+
+    options := []httpclientcontract.RequestOption{
+        httpclient.WithJson(payload),
+        httpclient.WithHeaders(map[string]string{
+            "Accept":               "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }),
+        httpclient.WithBearerToken(instance.token),
     }
 
-    reader, getBody := bodyReader(payload)
-    request, requestErr := http.NewRequest(http.MethodPatch, endpoint, reader)
-    if nil != requestErr {
-        return requestErr
-    }
-    request.GetBody = getBody
-
-    request.Header.Set("Accept", "application/vnd.github+json")
-    request.Header.Set("Content-Type", "application/json")
-    request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-    request.Header.Set("Authorization", "Bearer "+client.token)
-
-    response, doErr := doWithRetry(client.httpClient, request)
+    response, doErr := requestWithRetry(instance.httpClient, http.MethodPatch, endpoint, options...)
     if nil != doErr {
         return doErr
     }
-    defer response.Body.Close()
 
-    client.recordRateLimit(response)
+    instance.recordRateLimit(response)
 
-    if response.StatusCode < 200 || response.StatusCode >= 300 {
-        responseBody, _ := io.ReadAll(response.Body)
-        return fmt.Errorf("http %d: %s", response.StatusCode, string(responseBody))
+    if response.StatusCode() < 200 || response.StatusCode() >= 300 {
+        return fmt.Errorf("http %d: %s", response.StatusCode(), string(response.Body()))
     }
 
     return nil
 }
 
-func (client *GithubClient) get(url string, destination any) error {
-    request, requestErr := http.NewRequest(http.MethodGet, url, nil)
-    if nil != requestErr {
-        return requestErr
+func (instance *GithubClient) get(url string, destination any) error {
+    options := []httpclientcontract.RequestOption{
+        httpclient.WithHeaders(githubApiHeaders()),
+    }
+    if "" != instance.token {
+        options = append(options, httpclient.WithBearerToken(instance.token))
     }
 
-    request.Header.Set("Accept", "application/vnd.github+json")
-    request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-    request.Header.Set("Cache-Control", "no-cache, no-store")
-    request.Header.Set("Pragma", "no-cache")
-
-    if "" != client.token {
-        request.Header.Set("Authorization", "Bearer "+client.token)
-    }
-
-    response, doErr := doWithRetry(client.httpClient, request)
+    response, doErr := requestWithRetry(instance.httpClient, http.MethodGet, url, options...)
     if nil != doErr {
         return doErr
     }
-    defer response.Body.Close()
 
-    client.recordRateLimit(response)
+    instance.recordRateLimit(response)
 
-    body, readErr := io.ReadAll(response.Body)
-    if nil != readErr {
-        return readErr
+    if response.StatusCode() < 200 || response.StatusCode() >= 300 {
+        return fmt.Errorf("http %d: %s", response.StatusCode(), string(response.Body()))
     }
 
-    if response.StatusCode < 200 || response.StatusCode >= 300 {
-        return fmt.Errorf("http %d: %s", response.StatusCode, string(body))
-    }
-
-    return json.Unmarshal(body, destination)
+    return json.Unmarshal(response.Body(), destination)
 }

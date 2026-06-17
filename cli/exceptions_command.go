@@ -13,15 +13,15 @@ import (
 
 type ExceptionsCommand struct{}
 
-func (command *ExceptionsCommand) Name() string {
+func (instance *ExceptionsCommand) Name() string {
     return "exceptions"
 }
 
-func (command *ExceptionsCommand) Description() string {
+func (instance *ExceptionsCommand) Description() string {
     return "List exceptions from exceptions file, grouped by project"
 }
 
-func (command *ExceptionsCommand) Flags() []clicontract.Flag {
+func (instance *ExceptionsCommand) Flags() []clicontract.Flag {
     return output.MergeFlags(
         output.DebugFlags(),
         []clicontract.Flag{
@@ -34,7 +34,7 @@ func (command *ExceptionsCommand) Flags() []clicontract.Flag {
     )
 }
 
-func (command *ExceptionsCommand) Run(
+func (instance *ExceptionsCommand) Run(
     _ runtimecontract.Runtime,
     commandContext *clicontract.CommandContext,
 ) error {
@@ -50,7 +50,7 @@ func (command *ExceptionsCommand) Run(
     option := output.NormalizeOption(output.ParseOptionFromCommand(commandContext))
 
     meta := output.NewMeta(
-        command.Name(),
+        instance.Name(),
         commandContext.Args().Slice(),
         option,
         startedAt,

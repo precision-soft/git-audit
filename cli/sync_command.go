@@ -42,15 +42,15 @@ type syncDiff struct {
     titleChange string
 }
 
-func (command *SyncCommand) Name() string {
+func (instance *SyncCommand) Name() string {
     return "sync"
 }
 
-func (command *SyncCommand) Description() string {
+func (instance *SyncCommand) Description() string {
     return "sync github release bodies from local changelogs (changelog is the source of truth)"
 }
 
-func (command *SyncCommand) Flags() []clicontract.Flag {
+func (instance *SyncCommand) Flags() []clicontract.Flag {
     return output.MergeFlags(
         output.DebugFlags(),
         []clicontract.Flag{
@@ -79,7 +79,7 @@ func (command *SyncCommand) Flags() []clicontract.Flag {
     )
 }
 
-func (command *SyncCommand) Run(
+func (instance *SyncCommand) Run(
     runtimeInstance runtimecontract.Runtime,
     commandContext *clicontract.CommandContext,
 ) error {
@@ -104,7 +104,7 @@ func (command *SyncCommand) Run(
         option.TableMaxWidth = autoTableMaxWidth()
     }
     meta := output.NewMeta(
-        command.Name(),
+        instance.Name(),
         commandContext.Args().Slice(),
         option,
         startedAt,

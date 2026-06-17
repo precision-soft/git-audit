@@ -79,15 +79,15 @@ type DiffAuditResult struct {
 
 type AuditCommand struct{}
 
-func (command *AuditCommand) Name() string {
+func (instance *AuditCommand) Name() string {
     return "audit"
 }
 
-func (command *AuditCommand) Description() string {
+func (instance *AuditCommand) Description() string {
     return "Audit GitHub releases: tag/release 1:1, changelog, code diff, Packagist sync"
 }
 
-func (command *AuditCommand) Flags() []clicontract.Flag {
+func (instance *AuditCommand) Flags() []clicontract.Flag {
     return output.MergeFlags(
         output.DebugFlags(),
         []clicontract.Flag{
@@ -120,7 +120,7 @@ func (command *AuditCommand) Flags() []clicontract.Flag {
     )
 }
 
-func (command *AuditCommand) Run(
+func (instance *AuditCommand) Run(
     runtimeInstance runtimecontract.Runtime,
     commandContext *clicontract.CommandContext,
 ) error {
@@ -172,7 +172,7 @@ func (command *AuditCommand) Run(
     }
 
     meta := output.NewMeta(
-        command.Name(),
+        instance.Name(),
         commandContext.Args().Slice(),
         option,
         startedAt,

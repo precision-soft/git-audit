@@ -19,12 +19,12 @@ func NewGithubReleaseService(token string) *GithubReleaseService {
     }
 }
 
-func (s *GithubReleaseService) Token() string {
-    return s.token
+func (instance *GithubReleaseService) Token() string {
+    return instance.token
 }
 
-func (s *GithubReleaseService) Client() *GithubClient {
-    return s.client
+func (instance *GithubReleaseService) Client() *GithubClient {
+    return instance.client
 }
 
 func GithubReleaseServiceMustFromRuntime(runtimeInstance runtimecontract.Runtime) *GithubReleaseService {

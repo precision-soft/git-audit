@@ -30,10 +30,10 @@ type pendingWarning struct {
     url        string
 }
 
-func (entry *ExceptionEntry) UnmarshalJSON(data []byte) error {
+func (instance *ExceptionEntry) UnmarshalJSON(data []byte) error {
     var asString string
     if stringErr := json.Unmarshal(data, &asString); nil == stringErr {
-        entry.Issue = asString
+        instance.Issue = asString
         return nil
     }
     var rawObject struct {
@@ -43,35 +43,35 @@ func (entry *ExceptionEntry) UnmarshalJSON(data []byte) error {
     if objectErr := json.Unmarshal(data, &rawObject); nil != objectErr {
         return objectErr
     }
-    entry.Issue = rawObject.Issue
+    instance.Issue = rawObject.Issue
     if "" != strings.TrimSpace(rawObject.ReviewedUntil) {
         parsed, parseErr := time.Parse(exceptionDateLayout, rawObject.ReviewedUntil)
         if nil != parseErr {
             return fmt.Errorf("invalid reviewed_until %q: %w", rawObject.ReviewedUntil, parseErr)
         }
-        entry.ReviewedUntil = parsed
+        instance.ReviewedUntil = parsed
     }
     return nil
 }
 
-func (entry ExceptionEntry) MarshalJSON() ([]byte, error) {
-    if true == entry.ReviewedUntil.IsZero() {
-        return json.Marshal(entry.Issue)
+func (instance ExceptionEntry) MarshalJSON() ([]byte, error) {
+    if true == instance.ReviewedUntil.IsZero() {
+        return json.Marshal(instance.Issue)
     }
     return json.Marshal(struct {
         Issue         string `json:"issue"`
         ReviewedUntil string `json:"reviewed_until"`
     }{
-        Issue:         entry.Issue,
-        ReviewedUntil: entry.ReviewedUntil.Format(exceptionDateLayout),
+        Issue:         instance.Issue,
+        ReviewedUntil: instance.ReviewedUntil.Format(exceptionDateLayout),
     })
 }
 
-func (entry ExceptionEntry) Active(now time.Time) bool {
-    if true == entry.ReviewedUntil.IsZero() {
+func (instance ExceptionEntry) Active(now time.Time) bool {
+    if true == instance.ReviewedUntil.IsZero() {
         return true
     }
-    return now.Before(entry.ReviewedUntil) || now.Equal(entry.ReviewedUntil)
+    return now.Before(instance.ReviewedUntil) || now.Equal(instance.ReviewedUntil)
 }
 
 func loadExceptions(filePath string) (Exceptions, error) {
@@ -100,8 +100,8 @@ func saveExceptions(filePath string, exceptions Exceptions) error {
     return os.WriteFile(filePath, data, 0644)
 }
 
-func (exceptions Exceptions) has(repository, version, level, issue string, now time.Time) bool {
-    versionMap, hasRepository := exceptions[repository]
+func (instance Exceptions) has(repository, version, level, issue string, now time.Time) bool {
+    versionMap, hasRepository := instance[repository]
     if false == hasRepository {
         return false
     }
@@ -117,20 +117,20 @@ func (exceptions Exceptions) has(repository, version, level, issue string, now t
     return false
 }
 
-func (exceptions Exceptions) add(repository, version, level, issue string) {
-    if nil == exceptions[repository] {
-        exceptions[repository] = make(map[string]map[string][]ExceptionEntry)
+func (instance Exceptions) add(repository, version, level, issue string) {
+    if nil == instance[repository] {
+        instance[repository] = make(map[string]map[string][]ExceptionEntry)
     }
-    if nil == exceptions[repository][version] {
-        exceptions[repository][version] = make(map[string][]ExceptionEntry)
+    if nil == instance[repository][version] {
+        instance[repository][version] = make(map[string][]ExceptionEntry)
     }
-    for _, entry := range exceptions[repository][version][level] {
+    for _, entry := range instance[repository][version][level] {
         if entry.Issue == issue {
             return
         }
     }
-    exceptions[repository][version][level] = append(
-        exceptions[repository][version][level],
+    instance[repository][version][level] = append(
+        instance[repository][version][level],
         ExceptionEntry{Issue: issue},
     )
 }

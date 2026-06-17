@@ -1,52 +1,63 @@
 package service
 
 import (
-    "bytes"
-    "fmt"
-    "io"
     "net/http"
     "time"
+
+    "github.com/precision-soft/melody/v3/httpclient"
+    httpclientcontract "github.com/precision-soft/melody/v3/httpclient/contract"
 )
 
 const (
     httpTimeout    = 30 * time.Second
     maxAttempts    = 3
     initialBackoff = 500 * time.Millisecond
+    /*
+     * maxResponseBodyBytes is an effectively-unbounded ceiling that preserves the
+     * prior unbounded io.ReadAll behavior while still guarding against OOM. melody's
+     * httpclient defaults to 10 MiB, which a large `compare` diff can exceed.
+     */
+    maxResponseBodyBytes = 256 * 1024 * 1024
 )
 
-func newHttpClient() *http.Client {
-    return &http.Client{Timeout: httpTimeout}
+func newHttpClient() httpclientcontract.Client {
+    return httpclient.NewHttpClient(
+        httpclient.NewHttpClientConfig("", httpTimeout, nil),
+    )
 }
 
 /**
- * doWithRetry executes request with retries on 5xx/429 using exponential backoff.
- * The request body (if any) must be rewindable via http.Request.GetBody.
+ * requestWithRetry executes a request through melody's httpclient with retries on
+ * 5xx/429 using exponential backoff. melody re-derives the request body from the
+ * options on every attempt, so no manual body rewinding is needed.
  */
-func doWithRetry(httpClient *http.Client, request *http.Request) (*http.Response, error) {
-    var lastResponse *http.Response
+func requestWithRetry(
+    client httpclientcontract.Client,
+    method string,
+    url string,
+    options ...httpclientcontract.RequestOption,
+) (httpclientcontract.Response, error) {
+    var lastResponse httpclientcontract.Response
     var lastErr error
+
+    /*
+     * Default the body cap to effectively-unbounded; a caller may still override it
+     * by passing its own WithMaxResponseBodyBytes after this.
+     */
+    options = append(
+        []httpclientcontract.RequestOption{httpclient.WithMaxResponseBodyBytes(maxResponseBodyBytes)},
+        options...,
+    )
 
     backoff := initialBackoff
     for attempt := 1; attempt <= maxAttempts; attempt++ {
-        if attempt > 1 && nil != request.GetBody {
-            replayBody, bodyErr := request.GetBody()
-            if nil != bodyErr {
-                return nil, fmt.Errorf("rewind body: %w", bodyErr)
-            }
-            request.Body = replayBody
-        }
-
-        response, requestErr := httpClient.Do(request)
-        if nil == requestErr && false == shouldRetryStatus(response.StatusCode) {
+        response, requestErr := client.Request(method, url, options...)
+        if nil == requestErr && false == shouldRetryStatus(response.StatusCode()) {
             return response, nil
         }
 
         if nil != response {
             lastResponse = response
-            if attempt < maxAttempts {
-                _, _ = io.Copy(io.Discard, response.Body)
-                _ = response.Body.Close()
-            }
         }
         lastErr = requestErr
 
@@ -68,18 +79,4 @@ func shouldRetryStatus(statusCode int) bool {
         return true
     }
     return statusCode >= 500 && statusCode < 600
-}
-
-/**
- * bodyReader returns a reader + GetBody factory so requests with a body can be retried.
- */
-func bodyReader(payload []byte) (io.Reader, func() (io.ReadCloser, error)) {
-    if 0 == len(payload) {
-        return nil, nil
-    }
-    reader := bytes.NewReader(payload)
-    getBody := func() (io.ReadCloser, error) {
-        return io.NopCloser(bytes.NewReader(payload)), nil
-    }
-    return reader, getBody
 }
