@@ -65,9 +65,9 @@ type GithubClient struct {
     rateLimitMux sync.Mutex
 }
 
-/**
- * githubApiHeaders returns the headers shared by the api.github.com JSON endpoints.
- */
+/*
+githubApiHeaders returns the headers shared by the api.github.com JSON endpoints.
+*/
 func githubApiHeaders() map[string]string {
     return map[string]string{
         "Accept":               "application/vnd.github+json",
@@ -90,10 +90,10 @@ func (instance *GithubClient) RateLimit() RateLimitInfo {
     return instance.rateLimit
 }
 
-/**
- * recordRateLimit tracks the minimum Remaining seen across all responses
- * (= peak usage). Prior last-wins behavior overstated headroom.
- */
+/*
+recordRateLimit tracks the minimum Remaining seen across all responses
+(= peak usage). Prior last-wins behavior overstated headroom.
+*/
 func (instance *GithubClient) recordRateLimit(response httpclientcontract.Response) {
     headers := response.Headers()
     limit := headers.Get("X-RateLimit-Limit")

@@ -10,22 +10,25 @@ import (
 
 const cloneRootDirectory = ".dev-data/clones"
 
-/**
- * EnsureCloneReset clones repositoryUrl into .dev-data/clones/<name>/ when the
- * target directory is missing. If it already exists, the working tree is
- * hard-reset to origin (fetch → checkout default branch → reset --hard
- * origin/<branch> → clean -fdx), discarding any local changes. Returns the
- * relative path of the local clone.
- */
+/*
+EnsureCloneReset clones repositoryUrl into .dev-data/clones/<name>/ when the
+target directory is missing. If it already exists, the working tree is
+hard-reset to origin (fetch → checkout default branch → reset --hard
+origin/<branch> → clean -fdx), discarding any local changes. Returns the
+relative path of the local clone.
+*/
 func EnsureCloneReset(name, repositoryUrl string) (string, error) {
     if "" == name {
         return "", fmt.Errorf("clone name is required")
     }
-    if strings.ContainsAny(name, "/\\") || strings.Contains(name, "..") {
+    if true == strings.ContainsAny(name, "/\\") || true == strings.Contains(name, "..") {
         return "", fmt.Errorf("invalid clone name %q: must not contain path separators or %q", name, "..")
     }
     if "" == repositoryUrl {
         return "", fmt.Errorf("repo url is required for %q", name)
+    }
+    if true == strings.HasPrefix(repositoryUrl, "-") {
+        return "", fmt.Errorf("invalid repo url %q: must not start with %q", repositoryUrl, "-")
     }
 
     target := filepath.Join(cloneRootDirectory, name)
@@ -40,7 +43,7 @@ func EnsureCloneReset(name, repositoryUrl string) (string, error) {
         if mkdirErr := os.MkdirAll(parent, 0o755); nil != mkdirErr {
             return "", fmt.Errorf("mkdir %q: %w", parent, mkdirErr)
         }
-        if cloneErr := runGit("", "clone", repositoryUrl, target); nil != cloneErr {
+        if cloneErr := runGit("", "clone", "--", repositoryUrl, target); nil != cloneErr {
             return "", fmt.Errorf("clone %s into %q: %w", repositoryUrl, target, cloneErr)
         }
         return target, nil

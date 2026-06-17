@@ -9,13 +9,16 @@ All notable changes to this project will be documented in this file.
 - `semverParts()` — a pre-release or build-metadata suffix (e.g. `v1.2.3-rc1`, `v1.2.3+build`) is now stripped before parsing the patch segment; previously `strconv.Atoi("3-rc1")` failed and silently zeroed the segment, so `v1.2.3-rc1` compared as `1.2.0`
 - `stripTrailingLinkReferences()` — the trailing-link matcher now requires an `http(s)://` URL, so a section ending in a non-URL markdown reference definition (e.g. `[ticket]: ABC-123`) is no longer stripped from the extracted release body
 - `EnsureCloneReset()` — clone names containing path separators or `..` are now rejected, preventing a malformed project URL from writing outside `.dev-data/clones`
+- `EnsureCloneReset()` — repo URLs starting with `-` are now rejected and `git clone` is invoked with a `--` separator, preventing a malicious project URL from being parsed as a git option (e.g. `--upload-pack=…`, `-ext::sh …` argument injection)
 - `CompareTags()` — the JSON decode error is now wrapped with the org/repo and compared refs for context
 - `compareSemver()` — when numeric versions are equal a pre-release tag now ranks below its final release (`v1.0.0-rc1 < v1.0.0`) per semver precedence; the previous raw string fallback ranked the longer `-rc1` string as greater, skewing "latest version" selection when pre-release tags exist
+- `comparePrerelease()` — equal pre-release tags are now compared per semver §11: identifiers are split on `.`, numeric identifiers compare numerically (so `v1.0.0-rc.2 < v1.0.0-rc.10`), numeric identifiers rank below alphanumeric ones, and a larger identifier set outranks a shorter prefix (`v1.0.0-rc < v1.0.0-rc.1`); the previous fallback compared the whole pre-release string lexically, ordering `rc.10` before `rc.2`
 
 ### Added
 
 - `TestSemverPartsStripsPreReleaseAndBuild`, `TestCompareSemverIsNumericNotLexicographic`, `TestCompareSemverPreReleaseRanksBelowFinal`, `TestStripTrailingLinkReferencesDropsCompareLinks`, `TestStripTrailingLinkReferencesKeepsNonUrlReference` — unit coverage for the parsing fixes
-- `TestEnsureCloneResetRejectsInvalidInput` (clone-name/url validation, incl. the path-traversal guard), `TestShouldRetryStatus` (retry status policy), `TestAutoTableMaxWidthUnlimitedWhenNotTerminal` (non-terminal width), and `TestGetPackagistPackageVersions*` (packagist payload parsing, dist-reference fallback, missing-package and non-2xx errors) — the last via a dependency-free `fakeHttpClient`/`fakeResponse` test double
+- `TestCompareSemverPreReleaseDottedIdentifiers` — coverage for dotted pre-release precedence (numeric vs alphanumeric identifiers, identifier-count tiebreak)
+- `TestEnsureCloneResetRejectsInvalidInput` (clone-name/url validation, incl. the path-traversal guard and the option-injection guard for `--upload-pack`/`-ext::sh` URLs), `TestShouldRetryStatus` (retry status policy), `TestAutoTableMaxWidthUnlimitedWhenNotTerminal` (non-terminal width), and `TestGetPackagistPackageVersions*` (packagist payload parsing, dist-reference fallback, missing-package and non-2xx errors) — the last via a dependency-free `fakeHttpClient`/`fakeResponse` test double
 
 ## 2026-04-23
 

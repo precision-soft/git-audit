@@ -63,16 +63,16 @@ func formatRateLimitLine(info service.RateLimitInfo) string {
 }
 
 /*
- * parseGithubUrl extracts the organization and repository from any of the
- * common GitHub URL forms:
- *   - https://github.com/<org>/<repo>[.git][/]
- *   - git@github.com:<org>/<repo>[.git]
- *   - ssh://git@github.com/<org>/<repo>[.git]
- *   - github.com/<org>/<repo>[.git]
- *
- * The SSH forms are required so that forks can drop private-repo SSH URLs into
- * the project list (or pass them via --repo-url) without extra configuration.
- */
+parseGithubUrl extracts the organization and repository from any of the
+common GitHub URL forms:
+  - https://github.com/<org>/<repo>[.git][/]
+  - git@github.com:<org>/<repo>[.git]
+  - ssh://git@github.com/<org>/<repo>[.git]
+  - github.com/<org>/<repo>[.git]
+
+The SSH forms are required so that forks can drop private-repo SSH URLs into
+the project list (or pass them via --repo-url) without extra configuration.
+*/
 func parseGithubUrl(url string) (organization, repository string) {
     trimmed := strings.TrimRight(url, "/")
     trimmed = strings.TrimPrefix(trimmed, "https://")
@@ -148,13 +148,13 @@ func skipRestOfHeadingLine(content string, start int) int {
     return start + newlineIndex + 1
 }
 
-/**
- * stripTrailingLinkReferences drops trailing markdown link reference
- * definitions (e.g. `[v1.0.0]: https://.../compare/...`) from an extracted
- * changelog body. The last version's section otherwise absorbs the global
- * reference block that typically sits at the bottom of a CHANGELOG.md, since
- * extractChangelogEntry has no next heading to use as a stop boundary.
- */
+/*
+stripTrailingLinkReferences drops trailing markdown link reference
+definitions (e.g. `[v1.0.0]: https://.../compare/...`) from an extracted
+changelog body. The last version's section otherwise absorbs the global
+reference block that typically sits at the bottom of a CHANGELOG.md, since
+extractChangelogEntry has no next heading to use as a stop boundary.
+*/
 func stripTrailingLinkReferences(body string) string {
     if "" == body {
         return body
@@ -207,11 +207,11 @@ func compareSemver(left, right string) int {
     }
 
     /*
-     * Equal numeric triples: per semver a pre-release (e.g. v1.0.0-rc1) ranks
-     * lower than its final release (v1.0.0). A raw string compare would do the
-     * opposite (the longer "-rc1" string sorts greater), so handle the
-     * pre-release segment explicitly before falling back to lexical order.
-     */
+       Equal numeric triples: per semver a pre-release (e.g. v1.0.0-rc1) ranks
+       lower than its final release (v1.0.0). A raw string compare would do the
+       opposite (the longer "-rc1" string sorts greater), so handle the
+       pre-release segment explicitly before falling back to lexical order.
+    */
     leftPrerelease := semverPrerelease(left)
     rightPrerelease := semverPrerelease(right)
     switch {
@@ -219,11 +219,10 @@ func compareSemver(left, right string) int {
         return 1
     case "" != leftPrerelease && "" == rightPrerelease:
         return -1
-    case leftPrerelease != rightPrerelease:
-        if leftPrerelease < rightPrerelease {
-            return -1
+    case "" != leftPrerelease && "" != rightPrerelease:
+        if result := comparePrerelease(leftPrerelease, rightPrerelease); 0 != result {
+            return result
         }
-        return 1
     }
 
     if left < right {
@@ -247,6 +246,62 @@ func semverPrerelease(tag string) string {
         return trimmed[dashIndex+1:]
     }
     return ""
+}
+
+/*
+comparePrerelease compares two non-empty pre-release strings per semver §11:
+identifiers are split on ".", numeric identifiers compare numerically, numeric
+identifiers rank below non-numeric ones, non-numeric identifiers compare by ASCII
+order, and a larger set of identifiers outranks a smaller one when all preceding
+identifiers are equal (e.g. rc.2 < rc.10, rc < rc.1).
+*/
+func comparePrerelease(left, right string) int {
+    leftIdentifiers := strings.Split(left, ".")
+    rightIdentifiers := strings.Split(right, ".")
+
+    for index := 0; index < len(leftIdentifiers) && index < len(rightIdentifiers); index++ {
+        if result := comparePrereleaseIdentifier(leftIdentifiers[index], rightIdentifiers[index]); 0 != result {
+            return result
+        }
+    }
+
+    switch {
+    case len(leftIdentifiers) < len(rightIdentifiers):
+        return -1
+    case len(leftIdentifiers) > len(rightIdentifiers):
+        return 1
+    }
+    return 0
+}
+
+func comparePrereleaseIdentifier(left, right string) int {
+    leftValue, leftErr := strconv.Atoi(left)
+    rightValue, rightErr := strconv.Atoi(right)
+    leftNumeric := nil == leftErr
+    rightNumeric := nil == rightErr
+
+    switch {
+    case leftNumeric && rightNumeric:
+        switch {
+        case leftValue < rightValue:
+            return -1
+        case leftValue > rightValue:
+            return 1
+        }
+        return 0
+    case leftNumeric && false == rightNumeric:
+        return -1
+    case false == leftNumeric && rightNumeric:
+        return 1
+    }
+
+    switch {
+    case left < right:
+        return -1
+    case left > right:
+        return 1
+    }
+    return 0
 }
 
 func semverParts(tag string) [3]int {

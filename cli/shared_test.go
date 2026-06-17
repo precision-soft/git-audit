@@ -176,6 +176,26 @@ func TestCompareSemverPreReleaseRanksBelowFinal(t *testing.T) {
     }
 }
 
+func TestCompareSemverPreReleaseDottedIdentifiers(t *testing.T) {
+    testCases := []struct {
+        left  string
+        right string
+        want  int
+    }{
+        {"v1.0.0-rc.2", "v1.0.0-rc.10", -1},
+        {"v1.0.0-rc.10", "v1.0.0-rc.2", 1},
+        {"v1.0.0-rc.2", "v1.0.0-rc.2", 0},
+        {"v1.0.0-rc", "v1.0.0-rc.1", -1},
+        {"v1.0.0-alpha", "v1.0.0-beta", -1},
+        {"v1.0.0-alpha.1", "v1.0.0-alpha.beta", -1},
+    }
+    for _, testCase := range testCases {
+        if got := compareSemver(testCase.left, testCase.right); got != testCase.want {
+            t.Errorf("compareSemver(%q, %q) = %d, want %d", testCase.left, testCase.right, got, testCase.want)
+        }
+    }
+}
+
 func TestStripTrailingLinkReferencesDropsCompareLinks(t *testing.T) {
     body := "### Fixed\n\n- something\n\n[v1.0.0]: https://github.com/org/repo/compare/v0.9.0...v1.0.0"
 

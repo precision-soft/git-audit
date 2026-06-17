@@ -9,21 +9,21 @@ import (
 
 const flagRepoUrl = "repo-url"
 
-/**
- * resolveTargetProjects applies the --repo / --repo-url flag pair against the
- * built-in project list. --repo accepts a comma-separated list of repo names
- * (e.g. `doctrine-type,doctrine-utility`); --repo-url applies only when exactly
- * one --repo value is provided.
- *
- *   - empty filter, empty url         → return all known projects
- *   - empty filter, url set           → error (--repo-url requires --repo)
- *   - single filter, empty url        → resolve that repo against the project list
- *   - single filter, matching url     → return that project
- *   - single filter, mismatching url  → error (cannot override known URL)
- *   - single unknown filter, url set  → return ad-hoc ProjectConfig with that URL
- *   - multiple filters, empty url     → resolve each (all must be known); dedupe
- *   - multiple filters, url set       → error (--repo-url is single-valued)
- */
+/*
+resolveTargetProjects applies the --repo / --repo-url flag pair against the
+built-in project list. --repo accepts a comma-separated list of repo names
+(e.g. `doctrine-type,doctrine-utility`); --repo-url applies only when exactly
+one --repo value is provided.
+
+  - empty filter, empty url         → return all known projects
+  - empty filter, url set           → error (--repo-url requires --repo)
+  - single filter, empty url        → resolve that repo against the project list
+  - single filter, matching url     → return that project
+  - single filter, mismatching url  → error (cannot override known URL)
+  - single unknown filter, url set  → return ad-hoc ProjectConfig with that URL
+  - multiple filters, empty url     → resolve each (all must be known); dedupe
+  - multiple filters, url set       → error (--repo-url is single-valued)
+*/
 func resolveTargetProjects(repositoryFilter, repositoryUrl string) ([]project.ProjectConfig, error) {
     filters := splitRepoFilters(repositoryFilter)
 

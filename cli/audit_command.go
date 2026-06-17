@@ -910,7 +910,7 @@ func deriveProjectName(repository string) string {
 func normalizeProjectName(name string) string {
     var result strings.Builder
     for _, runeValue := range strings.ToLower(name) {
-        if unicode.IsLetter(runeValue) || unicode.IsDigit(runeValue) {
+        if true == unicode.IsLetter(runeValue) || true == unicode.IsDigit(runeValue) {
             result.WriteRune(runeValue)
         }
     }
@@ -1185,7 +1185,7 @@ func printTitleFixes(writer io.Writer, audits []types.ProjectAudit) {
         for _, release := range audit.Releases {
             hasTitleIssue := false
             for _, issue := range release.Presentation.Issues {
-                if strings.Contains(issue, "title") {
+                if true == strings.Contains(issue, "title") {
                     hasTitleIssue = true
                     break
                 }

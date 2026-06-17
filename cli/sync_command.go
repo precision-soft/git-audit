@@ -353,11 +353,11 @@ func printSyncDiffs(writer io.Writer, diffs []syncDiff) {
     }
 }
 
-/**
- * unifiedDiff returns a line-oriented diff between current and desired,
- * prefixed with "- " (removed), "+ " (added), "  " (context). LCS-based,
- * sufficient for small release bodies.
- */
+/*
+unifiedDiff returns a line-oriented diff between current and desired,
+prefixed with "- " (removed), "+ " (added), "  " (context). LCS-based,
+sufficient for small release bodies.
+*/
 func unifiedDiff(current, desired string) string {
     currentLines := splitLinesForDiff(current)
     desiredLines := splitLinesForDiff(desired)

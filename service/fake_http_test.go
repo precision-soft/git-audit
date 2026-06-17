@@ -6,7 +6,7 @@ import (
     httpclientcontract "github.com/precision-soft/melody/v3/httpclient/contract"
 )
 
-/** fakeResponse is a minimal httpclientcontract.Response used to drive parsing tests without network access. */
+/* fakeResponse is a minimal httpclientcontract.Response used to drive parsing tests without network access. */
 type fakeResponse struct {
     statusCode int
     body       []byte
@@ -52,7 +52,7 @@ func (instance *fakeResponse) IsServerError() bool {
     return instance.statusCode >= 500 && instance.statusCode < 600
 }
 
-/** fakeHttpClient returns a canned response/error for every request, regardless of method or url. */
+/* fakeHttpClient returns a canned response/error for every request, regardless of method or url. */
 type fakeHttpClient struct {
     response httpclientcontract.Response
     err      error

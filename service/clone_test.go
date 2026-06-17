@@ -18,6 +18,8 @@ func TestEnsureCloneResetRejectsInvalidInput(t *testing.T) {
         {"parent traversal", "..", "https://example.com/repo.git", "invalid clone name"},
         {"escaping path", "../escape", "https://example.com/repo.git", "invalid clone name"},
         {"empty url", "valid", "", "repo url is required"},
+        {"option-like url", "valid", "--upload-pack=touch", "invalid repo url"},
+        {"ext transport url", "valid", "-ext::sh -c touch", "invalid repo url"},
     }
 
     for _, testCase := range cases {
