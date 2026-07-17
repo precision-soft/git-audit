@@ -448,22 +448,20 @@ func listChangelogVersions(content string) []string {
     return versions
 }
 
+/* foldChangelogBody turns a changelog entry into a release body. The changelog nests its sections under the version heading, so they sit at h3; a release body carries no version heading of its own, so they rise to h2 — the level the presentation audit reads. Section names pass through untouched: a "### Security" becomes "## Security", never "## Fixed". Folding one section into another drops the distinction the author drew, hides a security entry among the ordinary fixes, and leaves the body with two same-named sections; the presentation audit accepts every section a project writes instead. */
 func foldChangelogBody(body string) string {
     normalized := strings.ReplaceAll(body, "\r\n", "\n")
 
     var folded []string
     for _, line := range strings.Split(normalized, "\n") {
         trimmed := strings.TrimRight(line, " \t")
-        switch {
-        case "### Security" == trimmed:
-            folded = append(folded, "## Fixed")
-        case "### Removed" == trimmed:
-            folded = append(folded, "## Changed")
-        case strings.HasPrefix(trimmed, "### "):
+        if true == strings.HasPrefix(trimmed, "### ") {
             folded = append(folded, "## "+strings.TrimPrefix(trimmed, "### "))
-        default:
-            folded = append(folded, trimmed)
+
+            continue
         }
+
+        folded = append(folded, trimmed)
     }
 
     return strings.TrimSpace(strings.Join(folded, "\n"))

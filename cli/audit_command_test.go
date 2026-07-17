@@ -419,3 +419,31 @@ func TestParseGithubUrl(t *testing.T) {
         }
     }
 }
+
+/* every Keep a Changelog section must be accepted: a missing one does not merely warn, it pressures the author
+   into renaming the section to one that is accepted, which is how a release body ends up with two "## Fixed"
+   blocks — the second a "## Security" in disguise. */
+func TestNonStandardSectionsAcceptsEveryKeepAChangelogSection(t *testing.T) {
+    for _, section := range []string{"Added", "Changed", "Deprecated", "Removed", "Fixed", "Security"} {
+        body := "## " + section + "\n\n- Something happened\n"
+        if found := nonStandardSections(body); 0 != len(found) {
+            t.Fatalf("expected the Keep a Changelog section %q to be accepted, got flagged: %v", section, found)
+        }
+    }
+}
+
+func TestNonStandardSectionsAcceptsTheProjectSections(t *testing.T) {
+    for _, section := range []string{"Documentation", "Notes", "Breaking Changes", "Upgrade Notes", "Bug Fixes"} {
+        body := "## " + section + "\n\n- Something happened\n"
+        if found := nonStandardSections(body); 0 != len(found) {
+            t.Fatalf("expected the project section %q to be accepted, got flagged: %v", section, found)
+        }
+    }
+}
+
+func TestNonStandardSectionsFlagsAnUnknownSection(t *testing.T) {
+    found := nonStandardSections("## Added\n\n- One\n\n## Miscellaneous\n\n- Two\n")
+    if 1 != len(found) || "## Miscellaneous" != found[0] {
+        t.Fatalf("expected only the unknown section to be flagged, got %v", found)
+    }
+}

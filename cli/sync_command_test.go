@@ -23,25 +23,43 @@ func TestListChangelogVersions(t *testing.T) {
     }
 }
 
+/* the fold raises the heading level and nothing else: every section keeps its own name, so a security entry
+   stays visible as one instead of being renamed into the ordinary fixes. */
 func TestFoldChangelogBody(t *testing.T) {
     body := "### Security\n\n- fixed vuln\n\n### Removed\n\n- old thing\n\n### Added\n\n- new thing\n"
 
     folded := foldChangelogBody(body)
 
-    if false == strings.Contains(folded, "## Fixed") {
-        t.Errorf("expected '## Fixed' in folded: %q", folded)
+    for _, section := range []string{"## Security", "## Removed", "## Added"} {
+        if false == strings.Contains(folded, section) {
+            t.Errorf("expected %q in folded: %q", section, folded)
+        }
     }
-    if false == strings.Contains(folded, "## Changed") {
-        t.Errorf("expected '## Changed' in folded: %q", folded)
-    }
-    if false == strings.Contains(folded, "## Added") {
-        t.Errorf("expected '## Added' in folded: %q", folded)
-    }
+
     if true == strings.Contains(folded, "### ") {
         t.Errorf("expected no '### ' headings after fold: %q", folded)
     }
-    if true == strings.Contains(folded, "Security") || true == strings.Contains(folded, "Removed") {
-        t.Errorf("expected Security/Removed to be folded away: %q", folded)
+
+    for _, invented := range []string{"## Fixed", "## Changed"} {
+        if true == strings.Contains(folded, invented) {
+            t.Errorf("nothing in the entry was a fix or a change, so %q was invented by renaming a section: %q", invented, folded)
+        }
+    }
+}
+
+/* two different sections must not collapse onto one name: a body carrying the same heading twice reads as a
+   mistake, and it is how a security entry used to disappear among the ordinary fixes. */
+func TestFoldChangelogBodyKeepsSectionsDistinct(t *testing.T) {
+    body := "### Fixed\n\n- a bug\n\n### Security\n\n- a vuln\n"
+
+    folded := foldChangelogBody(body)
+
+    if 1 != strings.Count(folded, "## Fixed") {
+        t.Errorf("expected exactly one '## Fixed' section, got %d: %q", strings.Count(folded, "## Fixed"), folded)
+    }
+
+    if 1 != strings.Count(folded, "## Security") {
+        t.Errorf("expected the security section to survive under its own name: %q", folded)
     }
 }
 

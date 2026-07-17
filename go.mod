@@ -3,7 +3,7 @@ module github.com/precision-soft/git-audit
 go 1.25.0
 
 require (
-	github.com/precision-soft/melody/v3 v3.7.0
+	github.com/precision-soft/melody/v3 v3.11.0
 	golang.org/x/term v0.27.0
 )
 

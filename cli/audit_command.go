@@ -36,15 +36,22 @@ var (
     changelogCompareLink        = regexp.MustCompile(`(?m)^\[(v\d+\.\d+\.\d+)\]:\s*https?://\S+/compare/\S+`)
     shaHexRegex                 = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
 
+    /* the six Keep a Changelog sections first, then the shapes the projects also write. Every section a project
+       legitimately uses has to be listed: a missing one does not merely warn, it pressures the author into
+       renaming the section to one that is accepted — which is how a release body ends up carrying two "## Fixed"
+       blocks, the second of them a "## Security" in disguise. */
     standardSections = map[string]bool{
-        "## Fixed":            true,
-        "## Changed":          true,
         "## Added":            true,
+        "## Changed":          true,
+        "## Deprecated":       true,
+        "## Removed":          true,
+        "## Fixed":            true,
+        "## Security":         true,
+        "## Documentation":    true,
         "## Notes":            true,
         "## Breaking Changes": true,
         "## Upgrade Notes":    true,
         "## Bug Fixes":        true,
-        "## Deprecated":       true,
     }
 )
 
