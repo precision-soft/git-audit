@@ -218,3 +218,183 @@ func TestStripTrailingLinkReferencesKeepsNonUrlReference(t *testing.T) {
         t.Errorf("expected non-URL reference definition to be preserved, got %q", got)
     }
 }
+
+func TestCodeFenceScannerTracksFencedRegions(t *testing.T) {
+    lines := []string{
+        "## Added",
+        "",
+        "```go",
+        "## not a heading",
+        "```",
+        "## Fixed",
+        "~~~",
+        "### neither is this",
+        "~~~",
+        "## Changed",
+    }
+    want := []bool{false, false, true, true, true, false, true, true, true, false}
+
+    var fence codeFenceScanner
+    for index, line := range lines {
+        if got := fence.inside(line); got != want[index] {
+            t.Errorf("line %d (%q): inside = %t, want %t", index, line, got, want[index])
+        }
+    }
+}
+
+func TestCodeFenceScannerIgnoresAMismatchedCloser(t *testing.T) {
+    var fence codeFenceScanner
+
+    fence.inside("```")
+    if false == fence.inside("~~~") {
+        t.Error("a different fence character must not close an open fence")
+    }
+    if false == fence.inside("still inside") {
+        t.Error("the fence must stay open after a mismatched closer")
+    }
+    fence.inside("```")
+    if true == fence.inside("out") {
+        t.Error("a matching closer must end the fence")
+    }
+}
+
+func FuzzCompareSemver(f *testing.F) {
+    seeds := []string{
+        "v1.0.0", "v1.0.1", "v1.10.0", "v1.9.0", "v4.1.9", "v4.1.12",
+        "v1.0.0-rc1", "v1.0.0-rc.2", "v1.0.0-rc.10", "v1.0.0+build.5",
+        "integrations/bunorm/v1.0.0", "integrations/bunorm/mysql/v1.1.5",
+        "", "v", "v1", "v1.2", "v1.2.3.4", "v-1.0.0", "vx.y.z",
+    }
+    for _, left := range seeds {
+        for _, right := range seeds {
+            f.Add(left, right, "v2.0.0")
+        }
+    }
+
+    f.Fuzz(func(t *testing.T, left string, right string, third string) {
+        if 0 != compareSemver(left, left) {
+            t.Fatalf("compareSemver is not reflexive for %q", left)
+        }
+
+        forward := compareSign(compareSemver(left, right))
+        backward := compareSign(compareSemver(right, left))
+        if forward != -backward {
+            t.Fatalf("compareSemver is not antisymmetric for %q / %q: %d vs %d", left, right, forward, backward)
+        }
+
+        leftMiddle := compareSign(compareSemver(left, right))
+        middleRight := compareSign(compareSemver(right, third))
+        if leftMiddle == middleRight && 0 != leftMiddle {
+            if leftMiddle != compareSign(compareSemver(left, third)) {
+                t.Fatalf(
+                    "compareSemver is not transitive for %q, %q, %q",
+                    left, right, third,
+                )
+            }
+        }
+    })
+}
+
+func compareSign(value int) int {
+    if value < 0 {
+        return -1
+    }
+    if value > 0 {
+        return 1
+    }
+
+    return 0
+}
+
+/* semverParts zeroes a segment it cannot parse, so non-negative is the whole guarantee */
+func FuzzSemverParts(f *testing.F) {
+    for _, seed := range []string{"v1.2.3", "v1.2.3-rc1", "v1.2.3+build", "", "v...", "v1.2.3.4.5", "-1.-2.-3", "v99999999999999999999.0.0"} {
+        f.Add(seed)
+    }
+
+    f.Fuzz(func(t *testing.T, tag string) {
+        parts := semverParts(tag)
+        for index, part := range parts {
+            if part < 0 {
+                t.Fatalf("semverParts(%q)[%d] = %d, want a non-negative segment", tag, index, part)
+            }
+        }
+    })
+}
+
+/* both halves are interpolated into a github API path, so neither may carry a separator */
+func FuzzParseGithubUrl(f *testing.F) {
+    for _, seed := range []string{
+        "https://github.com/precision-soft/doctrine-type",
+        "https://github.com/precision-soft/doctrine-type.git",
+        "git@github.com:precision-soft/doctrine-type.git",
+        "ssh://git@github.com/precision-soft/doctrine-type",
+        "github.com/precision-soft/doctrine-type/",
+        "", "/", "//", "https://", "git@", "a/b/c/d/e",
+    } {
+        f.Add(seed)
+    }
+
+    f.Fuzz(func(t *testing.T, url string) {
+        organization, repository := parseGithubUrl(url)
+
+        if true == strings.Contains(organization, "/") {
+            t.Fatalf("parseGithubUrl(%q) organization %q carries a separator", url, organization)
+        }
+        if true == strings.Contains(repository, "/") {
+            t.Fatalf("parseGithubUrl(%q) repository %q carries a separator", url, repository)
+        }
+    })
+}
+
+/* the entry is pushed verbatim into a release body, so it must stay a piece of its own changelog */
+func FuzzExtractChangelogEntry(f *testing.F) {
+    f.Add("# Changelog\n\n## [v1.0.0] - 2026-01-01 - Title\n\n### Added\n\n- one\n", "v1.0.0")
+    f.Add("## v1.0.0\n\n### Added\n\n- one\n", "v1.0.0")
+    f.Add("## [v2.0.0] - 2026-01-01\n\n- a\n\n## [v1.0.0] - 2025-01-01\n\n- b\n\n[v1.0.0]: https://x/compare/a...b\n", "v1.0.0")
+    f.Add("", "v1.0.0")
+
+    f.Fuzz(func(t *testing.T, content string, version string) {
+        body, found := extractChangelogEntry(content, version)
+        if false == found {
+            return
+        }
+
+        if false == strings.Contains(content, body) {
+            t.Fatalf("extractChangelogEntry(%q) returned %q, which is not part of the content", version, body)
+        }
+    })
+}
+
+func TestMarkdownHeading(t *testing.T) {
+    cases := []struct {
+        name      string
+        line      string
+        wantLevel int
+        wantText  string
+    }{
+        {"plain h2", "## Fixed", 2, "Fixed"},
+        {"plain h3", "### Security", 3, "Security"},
+        {"indented by one", " ### Security", 3, "Security"},
+        {"indented by three", "   ### Security", 3, "Security"},
+        {"indented by four is code", "    ### Security", 0, ""},
+        {"tab indent is code", "\t### Security", 0, ""},
+        {"extra inner spacing", "###   Security  ", 3, "Security"},
+        {"no space after hashes", "###Security", 0, ""},
+        {"no text", "###", 0, ""},
+        {"only spaces after hashes", "###   ", 0, ""},
+        {"seven hashes", "####### Deep", 0, ""},
+        {"not a heading", "- a bullet", 0, ""},
+        {"empty", "", 0, ""},
+    }
+
+    for _, testCase := range cases {
+        level, text := markdownHeading(testCase.line)
+        if level != testCase.wantLevel || text != testCase.wantText {
+            t.Errorf(
+                "%s: markdownHeading(%q) = (%d, %q), want (%d, %q)",
+                testCase.name, testCase.line, level, text, testCase.wantLevel, testCase.wantText,
+            )
+        }
+    }
+}

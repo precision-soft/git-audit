@@ -1,13 +1,11 @@
 #!/bin/bash
 
-# bash history
 export HISTFILE="${HOME}/.bash_history"
 export HISTSIZE=10000
 export HISTFILESIZE=10000
 if [ -n "${BASH_VERSION:-}" ]; then
     shopt -s histappend
 fi
-# end bash history
 
 if [ -n "${BASH_VERSION:-}" ]; then
     if [[ -f /app/.dev/utility.sh ]]; then
@@ -15,13 +13,10 @@ if [ -n "${BASH_VERSION:-}" ]; then
     fi
 fi
 
-# generic
 alias ll="ls -al"
 alias app="cd /app/"
-# end generic
 
 if [ -n "${BASH_VERSION:-}" ]; then
-    # go
     gv() {
         go vet "$@" ./...
     }
@@ -53,15 +48,11 @@ if [ -n "${BASH_VERSION:-}" ]; then
 
         chmod +x "$outputName"
     }
-    # end go
 
-    # git-audit
     audit() {
         go run . audit "$@"
     }
-    # end git-audit
 
-    # git
     if command -v git > /dev/null 2>&1; then
         git config --global alias.st status
         git config --global alias.ci commit
@@ -77,7 +68,6 @@ if [ -n "${BASH_VERSION:-}" ]; then
         git config --global pull.rebase false
         git config --global --add safe.directory /app/
     fi
-    # end git
 
     if [[ -f ~/.bash_aliases_local ]]; then
         . ~/.bash_aliases_local

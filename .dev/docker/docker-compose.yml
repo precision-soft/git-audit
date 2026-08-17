@@ -9,6 +9,8 @@ services:
                 CONFIG_PATH: ${DOCKER_PATH}
                 ROOT_PATH: ${CONTAINER_ROOT_PATH}
         restart: 'no'
+        # tini as PID 1, so SIGTERM reaches the sleep the entrypoint execs into
+        init: true
         volumes:
             - ${RELATIVE_PATH_TO_ROOT}:${CONTAINER_ROOT_PATH}
             - ${RELATIVE_PATH_TO_ROOT}/.dev-data/go/pkg/mod:/go/pkg/mod

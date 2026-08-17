@@ -1,11 +1,16 @@
 package cli
 
 import (
+    "bytes"
+    "encoding/json"
     "strings"
     "testing"
+    "time"
 
     "github.com/precision-soft/git-audit/service"
     "github.com/precision-soft/git-audit/types"
+
+    "github.com/precision-soft/melody/v3/cli/output"
 )
 
 func TestCompareSemver(t *testing.T) {
@@ -420,9 +425,6 @@ func TestParseGithubUrl(t *testing.T) {
     }
 }
 
-/* every Keep a Changelog section must be accepted: a missing one does not merely warn, it pressures the author
-   into renaming the section to one that is accepted, which is how a release body ends up with two "## Fixed"
-   blocks — the second a "## Security" in disguise. */
 func TestNonStandardSectionsAcceptsEveryKeepAChangelogSection(t *testing.T) {
     for _, section := range []string{"Added", "Changed", "Deprecated", "Removed", "Fixed", "Security"} {
         body := "## " + section + "\n\n- Something happened\n"
@@ -445,5 +447,120 @@ func TestNonStandardSectionsFlagsAnUnknownSection(t *testing.T) {
     found := nonStandardSections("## Added\n\n- One\n\n## Miscellaneous\n\n- Two\n")
     if 1 != len(found) || "## Miscellaneous" != found[0] {
         t.Fatalf("expected only the unknown section to be flagged, got %v", found)
+    }
+}
+
+func auditWithTitleIssue() []types.ProjectAudit {
+    return []types.ProjectAudit{
+        {
+            OrganizationName: "precision-soft",
+            RepositoryName:   "doctrine-type",
+            ProjectName:      "Doctrine Type",
+            Releases: []types.ReleaseAudit{
+                {
+                    TagName:      "v1.0.0",
+                    ReleaseTitle: "doctrine type v1.0.0 - lowercase summary",
+                    Presentation: types.LevelResult{
+                        Status: types.LevelWarning,
+                        Issues: []string{`title summary "lowercase summary" must start with uppercase`},
+                    },
+                    Status: types.StatusWarning,
+                },
+            },
+            PresentationStatus:  types.LevelWarning,
+            PresentationDisplay: "warning (1)",
+            Status:              types.StatusWarning,
+        },
+    }
+}
+
+func renderAuditOutputForFormat(t *testing.T, format output.Format, audits []types.ProjectAudit) string {
+    t.Helper()
+
+    option := output.NormalizeOption(output.DefaultOption())
+    option.Format = format
+    option.NoColor = true
+
+    envelope := output.NewEnvelope(
+        output.NewMeta("audit", nil, option, time.Now(), 0, output.Version{}),
+    )
+    envelope.Data = output.NewListPayload(audits, len(audits), option.Limit, option.Offset)
+
+    var buffer bytes.Buffer
+    if renderErr := renderAuditOutput(&buffer, envelope, option, audits); nil != renderErr {
+        t.Fatalf("renderAuditOutput returned an error: %v", renderErr)
+    }
+
+    return buffer.String()
+}
+
+func TestRenderAuditOutputKeepsJsonParseable(t *testing.T) {
+    rendered := renderAuditOutputForFormat(t, output.FormatJson, auditWithTitleIssue())
+
+    var decoded any
+    if unmarshalErr := json.Unmarshal([]byte(rendered), &decoded); nil != unmarshalErr {
+        t.Fatalf("json output is not parseable (%v), rendered:\n%s", unmarshalErr, rendered)
+    }
+
+    if true == strings.Contains(rendered, "TITLE FIXES:") {
+        t.Errorf("the title-fix block leaked into the json output:\n%s", rendered)
+    }
+}
+
+func TestRenderAuditOutputKeepsTitleFixesInTheTableFormat(t *testing.T) {
+    rendered := renderAuditOutputForFormat(t, output.FormatTable, auditWithTitleIssue())
+
+    if false == strings.Contains(rendered, "TITLE FIXES:") {
+        t.Fatalf("expected the title-fix block in the table output, got:\n%s", rendered)
+    }
+    if false == strings.Contains(rendered, "Doctrine Type v1.0.0 - Lowercase summary") {
+        t.Errorf("expected the corrected title in the table output, got:\n%s", rendered)
+    }
+}
+
+func TestSortReleaseAuditsOrdersBySemverNotLexically(t *testing.T) {
+    releaseAudits := []types.ReleaseAudit{
+        {TagName: "v4.1.9"},
+        {TagName: "v4.1.12"},
+        {TagName: "v4.1.10"},
+        {TagName: "v10.0.0"},
+        {TagName: "v2.0.0"},
+        {TagName: "v2.0.0-rc1"},
+    }
+
+    sortReleaseAudits(releaseAudits)
+
+    want := []string{"v2.0.0-rc1", "v2.0.0", "v4.1.9", "v4.1.10", "v4.1.12", "v10.0.0"}
+    for index, expected := range want {
+        if releaseAudits[index].TagName != expected {
+            got := make([]string, 0, len(releaseAudits))
+            for _, releaseAudit := range releaseAudits {
+                got = append(got, releaseAudit.TagName)
+            }
+            t.Fatalf("sortReleaseAudits ordered %v, want %v", got, want)
+        }
+    }
+}
+
+func TestNonStandardSectionsIgnoresFencedCodeBlocks(t *testing.T) {
+    body := "## Added\n\n" +
+        "- Support for a new heading\n\n" +
+        "```markdown\n" +
+        "## Miscellaneous\n" +
+        "```\n\n" +
+        "## Fixed\n\n- Something\n"
+
+    if found := nonStandardSections(body); 0 != len(found) {
+        t.Fatalf("expected no section to be flagged, got %v", found)
+    }
+}
+
+/* flagging a mis-cased or decorated heading is deliberate, not an oversight to relax */
+func TestNonStandardSectionsFlagsMisCasedAndDecoratedHeadings(t *testing.T) {
+    for _, section := range []string{"## fixed", "## FIXED", "## Fixed (3)"} {
+        found := nonStandardSections(section + "\n\n- Something\n")
+        if 1 != len(found) || section != found[0] {
+            t.Errorf("expected %q to be flagged, got %v", section, found)
+        }
     }
 }

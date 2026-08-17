@@ -1,6 +1,7 @@
 # Git Audit
 
-[![Go >= 1.24](https://img.shields.io/badge/go-%3E%3D1.24-00ADD8)](https://go.dev/)
+[![ci](https://github.com/precision-soft/git-audit/actions/workflows/ci.yml/badge.svg)](https://github.com/precision-soft/git-audit/actions/workflows/ci.yml)
+[![Go >= 1.25](https://img.shields.io/badge/go-%3E%3D1.25-00ADD8)](https://go.dev/)
 [![License MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 Go CLI that **audits GitHub releases** and **syncs release bodies from each repo's `CHANGELOG.md`** (changelog is the source of truth). For every tag it produces per-level status (integrity, distribution, changelog, diff, presentation), supports accepted exceptions with expiry, and manages local clones automatically.
@@ -50,6 +51,10 @@ GITHUB_TOKEN=ghp_xxx
 ```
 
 Precedence for the token: `--token` flag > `github.token` in the melody config > `GITHUB_TOKEN` env.
+
+The token is registered as a **secret** parameter, so `debug:parameters` renders it as `********` instead of in clear text — under both the `github.token` name and the `GITHUB_TOKEN` key melody registers from the `.env` artifacts.
+
+> **Do not build with `-tags melody_env_embedded` from a checkout whose `.env.local` holds a real token.** That tag embeds `.env*` into the binary, `.env.local` included, so the credential ships inside the executable. The tag exists for environments that have no `.env` file next to the binary; give it an `.env.local` written for that purpose.
 
 ## Commands
 
@@ -215,7 +220,33 @@ main.go              # melody runtime bootstrap
 go test ./...
 ```
 
-Covers semver comparison, overlap ratio, changelog entry extraction, title regex, `sync` folding/canonicalization, GitHub URL parsing (HTTPS + SSH).
+The default gate is fast and offline. It covers semver comparison, overlap ratio, changelog entry extraction, title regex, `sync` folding/canonicalization, GitHub URL parsing (HTTPS + SSH), exception handling, and markdown heading/code-fence scanning.
+
+### End-to-end
+
+```bash
+go test -tags=e2e ./...
+```
+
+`main_test.go` compiles the binary and runs it out of a scratch directory, asserting on stdout, the exit code, and the files it leaves behind — including that the GitHub token is redacted in `debug:parameters` and that `--repo-url` clones a scratch repository built with git plumbing. Anything needing a prerequisite the module cannot provide (git, a real GitHub token) skips rather than fails. The build tag keeps all of it out of the default gate.
+
+`.dev/validate/all.sh --e2e` runs it as a section, and the CI workflow runs it on every push. It stays behind a flag locally because it compiles the binary, which is more than a pre-commit hook should cost — the hook and CI enforce the same set except for this one lane, deliberately.
+
+### Fuzzing
+
+```bash
+go test -run=NONE -fuzz=FuzzCompareSemver -fuzztime=30s ./cli
+```
+
+Targets exist for the parsers that have produced real bugs: `FuzzCompareSemver`, `FuzzSemverParts`, `FuzzParseGithubUrl`, `FuzzExtractChangelogEntry` and `FuzzFoldChangelogBody`. They assert properties, not just the absence of a crash — the ordering is reflexive, antisymmetric and transitive; the fold is idempotent and leaves no section heading at the changelog's nesting level. Crashers are kept as seeds under `cli/testdata/fuzz/` and run as ordinary tests from then on.
+
+### Static analysis
+
+```bash
+staticcheck ./... && staticcheck -tags=e2e ./...
+```
+
+Configured by `staticcheck.conf`, which disables only the two checks that contradict the house style on purpose (`S1002` bool comparisons, `ST1017` Yoda conditions). staticcheck does not check formatting, so the four-space indentation is untouched. It is baked into the dev image and runs as a section of `.dev/validate/all.sh`.
 
 ## Code style
 

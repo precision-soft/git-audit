@@ -17,6 +17,12 @@ ENV GONOSUMDB=github.com/precision-soft
 
 RUN apk add --update --no-cache git shadow bash
 
+ARG STATICCHECK_VERSION=v0.7.0
+RUN go install honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}
+
+ARG GOVULNCHECK_VERSION=v1.7.0
+RUN go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
+
 RUN mkdir -p "${HOME}"
 RUN mkdir -p /go/cache/go-build
 
@@ -37,9 +43,7 @@ RUN printf '%s\n' \
 
 WORKDIR ${WORKDIR}
 
-ENV CONFIG_PATH_ENTRYPOINT_SH=${ROOT_PATH}${CONFIG_PATH}/entrypoint.sh
+COPY ${DOCKER_PATH}/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
-ENV ENTRYPOINT_SH=/entrypoint.sh
-COPY ${DOCKER_PATH}/entrypoint.sh ${ENTRYPOINT_SH}
-
-ENTRYPOINT exec ${ENTRYPOINT_SH}
+ENTRYPOINT ["/entrypoint.sh"]

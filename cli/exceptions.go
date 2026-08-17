@@ -4,6 +4,7 @@ import (
     "bufio"
     "encoding/json"
     "fmt"
+    "io"
     "os"
     "sort"
     "strconv"
@@ -11,6 +12,8 @@ import (
     "time"
 
     "github.com/precision-soft/git-audit/types"
+
+    "github.com/precision-soft/melody/v3/cli/output"
 )
 
 const exceptionDateLayout = "2006-01-02"
@@ -158,6 +161,14 @@ func applyExceptions(audits []types.ProjectAudit, exceptions Exceptions) {
             releaseChanged := false
             for _, level := range levelNames {
                 result := releaseLevels(release)[level]
+
+                /* an exception accepts a warning, never a failure: filtering the issues of a failed
+                   level strips the only line explaining the failure and leaves the failure standing,
+                   so the audit reports red with nothing under it. */
+                if types.LevelWarning != result.Status {
+                    continue
+                }
+
                 var remaining []string
                 filtered := false
                 for _, issue := range result.Issues {
@@ -171,7 +182,7 @@ func applyExceptions(audits []types.ProjectAudit, exceptions Exceptions) {
                     continue
                 }
                 result.Issues = remaining
-                if 0 == len(remaining) && types.LevelWarning == result.Status {
+                if 0 == len(remaining) {
                     result.Status = types.LevelOk
                 }
                 releaseChanged = true
@@ -270,17 +281,28 @@ func collectPendingWarnings(audits []types.ProjectAudit) []pendingWarning {
     return pending
 }
 
-func reviewWarningsInteractively(pending []pendingWarning, exceptions Exceptions) (bool, error) {
-    if 0 == len(pending) || false == isInteractiveTTY() {
+/*
+reviewWarningsInteractively offers the unacknowledged warnings for acceptance and reports whether
+the exception set was modified. It is confined to the table format for the same reason
+renderAuditOutput is: a caller that asked for a machine-readable document gets one document, not a
+document followed by a plain-text question.
+*/
+func reviewWarningsInteractively(
+    writer io.Writer,
+    option output.Option,
+    pending []pendingWarning,
+    exceptions Exceptions,
+) (bool, error) {
+    if 0 == len(pending) || output.FormatTable != option.Format || false == isInteractiveTTY() {
         return false, nil
     }
 
-    fmt.Printf("\nUnacknowledged warnings (%d):\n", len(pending))
+    fmt.Fprintf(writer, "\nUnacknowledged warnings (%d):\n", len(pending))
     for warningIndex, warning := range pending {
-        fmt.Printf("  [%3d] %-42s %-14s %s\n", warningIndex+1, warning.repository, warning.version, warning.issue)
-        fmt.Printf("       %s\n", warning.url)
+        fmt.Fprintf(writer, "  [%3d] %-42s %-14s %s\n", warningIndex+1, warning.repository, warning.version, warning.issue)
+        fmt.Fprintf(writer, "       %s\n", warning.url)
     }
-    fmt.Printf("\nAccept as OK (e.g. \"1 2 5\", \"1-10\", \"all\", or Enter to skip): ")
+    fmt.Fprintf(writer, "\nAccept as OK (e.g. \"1 2 5\", \"1-10\", \"all\", or Enter to skip): ")
 
     scanner := bufio.NewScanner(os.Stdin)
     if false == scanner.Scan() {

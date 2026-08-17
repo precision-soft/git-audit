@@ -20,6 +20,11 @@ import (
 const (
     flagApply = "apply"
     flagTag   = "tag"
+
+    /* the carriage return belongs here next to the space and the tab: replacing "\r\n" leaves a
+       lone "\r", and trimming only the space rebuilds a "\r\n" pair for the next pass to replace,
+       so the body never settles and sync reports the same release as out of date forever. */
+    lineTrailingWhitespace = " \t\r"
 )
 
 var changelogVersionListRegex = regexp.MustCompile(`(?m)^##\s+\[?(v\d+\.\d+\.\d+)\]?`)
@@ -354,9 +359,8 @@ func printSyncDiffs(writer io.Writer, diffs []syncDiff) {
 }
 
 /*
-unifiedDiff returns a line-oriented diff between current and desired,
-prefixed with "- " (removed), "+ " (added), "  " (context). LCS-based,
-sufficient for small release bodies.
+unifiedDiff returns a line-oriented diff between current and desired, prefixed with "- " removed,
+"+ " added, "  " context. LCS-based, sufficient for small release bodies.
 */
 func unifiedDiff(current, desired string) string {
     currentLines := splitLinesForDiff(current)
@@ -448,23 +452,51 @@ func listChangelogVersions(content string) []string {
     return versions
 }
 
-/* foldChangelogBody turns a changelog entry into a release body. The changelog nests its sections under the version heading, so they sit at h3; a release body carries no version heading of its own, so they rise to h2 — the level the presentation audit reads. Section names pass through untouched: a "### Security" becomes "## Security", never "## Fixed". Folding one section into another drops the distinction the author drew, hides a security entry among the ordinary fixes, and leaves the body with two same-named sections; the presentation audit accepts every section a project writes instead. */
+/*
+foldChangelogBody turns a changelog entry into a release body. The changelog nests its sections
+under the version heading, so they sit at h3; a release body has no version heading of its own, so
+they rise to h2 — the level the presentation audit reads. Section names pass through untouched: a
+"### Security" becomes "## Security", never "## Fixed". Headings inside a fenced code block are
+sample text and stay at the level the author wrote them.
+*/
 func foldChangelogBody(body string) string {
     normalized := strings.ReplaceAll(body, "\r\n", "\n")
 
     var folded []string
+    var fence codeFenceScanner
     for _, line := range strings.Split(normalized, "\n") {
-        trimmed := strings.TrimRight(line, " \t")
-        if true == strings.HasPrefix(trimmed, "### ") {
-            folded = append(folded, "## "+strings.TrimPrefix(trimmed, "### "))
+        trimmed := strings.TrimRight(line, lineTrailingWhitespace)
+        if false == fence.inside(line) {
+            if level, text := markdownHeading(line); 3 == level {
+                folded = append(folded, "## "+text)
 
-            continue
+                continue
+            }
         }
 
         folded = append(folded, trimmed)
     }
 
-    return strings.TrimSpace(strings.Join(folded, "\n"))
+    return strings.Join(trimBlankEdgeLines(folded), "\n")
+}
+
+/*
+trimBlankEdgeLines drops the blank lines at both ends of a block without touching the indentation
+of the first line that carries content. Trimming the block as one string takes that indentation
+with it, and four leading columns are what tells an indented code block from a heading.
+*/
+func trimBlankEdgeLines(lines []string) []string {
+    start := 0
+    for start < len(lines) && "" == strings.TrimSpace(lines[start]) {
+        start++
+    }
+
+    end := len(lines)
+    for end > start && "" == strings.TrimSpace(lines[end-1]) {
+        end--
+    }
+
+    return lines[start:end]
 }
 
 func compareReleaseBody(current, desired string) bool {
@@ -476,13 +508,13 @@ func canonicalReleaseBody(body string) string {
     lines := strings.Split(normalized, "\n")
     var cleaned []string
     for _, line := range lines {
-        trimmed := strings.TrimRight(line, " \t")
+        trimmed := strings.TrimRight(line, lineTrailingWhitespace)
         if "" == trimmed && len(cleaned) > 0 && "" == cleaned[len(cleaned)-1] {
             continue
         }
         cleaned = append(cleaned, trimmed)
     }
-    return strings.TrimSpace(strings.Join(cleaned, "\n"))
+    return strings.Join(trimBlankEdgeLines(cleaned), "\n")
 }
 
 var _ clicontract.Command = (*SyncCommand)(nil)

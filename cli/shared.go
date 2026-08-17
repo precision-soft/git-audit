@@ -19,7 +19,87 @@ var (
     changelogHeadingV2         = regexp.MustCompile(`(?m)^##\s+\[(v\d+\.\d+\.\d+)\]`)
     changelogHeadingV1         = regexp.MustCompile(`(?m)^##\s+(v\d+\.\d+\.\d+)`)
     changelogLinkReferenceLine = regexp.MustCompile(`^\[[^\]]+\]:\s+https?://\S+`)
+    codeFenceMarker            = regexp.MustCompile("^(`{3,}|~{3,})")
 )
+
+/*
+markdownHeading reports the level and the text of an ATX heading line, and 0 for a line that is
+not one. The indent is counted rather than trimmed: markdown accepts a heading indented by up to
+three columns, and a fourth makes the line an indented code block instead. A heading with no text
+names no section.
+*/
+func markdownHeading(line string) (int, string) {
+    if markdownIndentWidth(line) > 3 {
+        return 0, ""
+    }
+
+    trimmed := strings.TrimSpace(line)
+    level := len(trimmed) - len(strings.TrimLeft(trimmed, "#"))
+    if level < 1 || level > 6 {
+        return 0, ""
+    }
+
+    text := trimmed[level:]
+    if "" == text || false == strings.HasPrefix(text, " ") {
+        return 0, ""
+    }
+
+    text = strings.TrimSpace(text)
+    if "" == text {
+        return 0, ""
+    }
+
+    return level, text
+}
+
+func markdownIndentWidth(line string) int {
+    width := 0
+    for _, character := range line {
+        switch character {
+        case ' ':
+            width++
+        case '\t':
+            width += 4
+        default:
+            return width
+        }
+    }
+
+    return width
+}
+
+/*
+codeFenceScanner tracks whether a markdown line sits inside a fenced code block. Both changelog
+entries and release bodies document markdown, so both carry `## ` lines that are sample text
+rather than sections the project writes.
+*/
+type codeFenceScanner struct {
+    fence string
+}
+
+/*
+inside consumes one line, in order, and reports whether it belongs to a fenced code block. The
+delimiters themselves count as inside, and per CommonMark a closer only counts when it repeats
+the opener's character at least as many times.
+*/
+func (instance *codeFenceScanner) inside(line string) bool {
+    marker := codeFenceMarker.FindString(strings.TrimSpace(line))
+    if "" == marker {
+        return "" != instance.fence
+    }
+
+    if "" == instance.fence {
+        instance.fence = marker
+
+        return true
+    }
+
+    if marker[0] == instance.fence[0] && len(marker) >= len(instance.fence) {
+        instance.fence = ""
+    }
+
+    return true
+}
 
 func resolveGithubClient(
     runtimeInstance runtimecontract.Runtime,
@@ -63,15 +143,9 @@ func formatRateLimitLine(info service.RateLimitInfo) string {
 }
 
 /*
-parseGithubUrl extracts the organization and repository from any of the
-common GitHub URL forms:
-  - https://github.com/<org>/<repo>[.git][/]
-  - git@github.com:<org>/<repo>[.git]
-  - ssh://git@github.com/<org>/<repo>[.git]
-  - github.com/<org>/<repo>[.git]
-
-The SSH forms are required so that forks can drop private-repo SSH URLs into
-the project list (or pass them via --repo-url) without extra configuration.
+parseGithubUrl extracts the organization and repository from any common GitHub URL form. The SSH
+forms are accepted so that a fork can put a private-repo SSH URL in the project list, or pass one
+through --repo-url, without further configuration.
 */
 func parseGithubUrl(url string) (organization, repository string) {
     trimmed := strings.TrimRight(url, "/")
@@ -149,11 +223,10 @@ func skipRestOfHeadingLine(content string, start int) int {
 }
 
 /*
-stripTrailingLinkReferences drops trailing markdown link reference
-definitions (e.g. `[v1.0.0]: https://.../compare/...`) from an extracted
-changelog body. The last version's section otherwise absorbs the global
-reference block that typically sits at the bottom of a CHANGELOG.md, since
-extractChangelogEntry has no next heading to use as a stop boundary.
+stripTrailingLinkReferences drops trailing markdown link reference definitions (e.g.
+`[v1.0.0]: https://.../compare/...`) from an extracted changelog body. The last version's section
+has no next heading to stop at, so it otherwise absorbs the reference block at the bottom of the
+file.
 */
 func stripTrailingLinkReferences(body string) string {
     if "" == body {
@@ -207,10 +280,8 @@ func compareSemver(left, right string) int {
     }
 
     /*
-       Equal numeric triples: per semver a pre-release (e.g. v1.0.0-rc1) ranks
-       lower than its final release (v1.0.0). A raw string compare would do the
-       opposite (the longer "-rc1" string sorts greater), so handle the
-       pre-release segment explicitly before falling back to lexical order.
+       Per semver a pre-release ranks below its final release, while a raw string compare does the
+       opposite: the longer "v1.0.0-rc1" sorts above "v1.0.0".
     */
     leftPrerelease := semverPrerelease(left)
     rightPrerelease := semverPrerelease(right)
@@ -249,11 +320,9 @@ func semverPrerelease(tag string) string {
 }
 
 /*
-comparePrerelease compares two non-empty pre-release strings per semver §11:
-identifiers are split on ".", numeric identifiers compare numerically, numeric
-identifiers rank below non-numeric ones, non-numeric identifiers compare by ASCII
-order, and a larger set of identifiers outranks a smaller one when all preceding
-identifiers are equal (e.g. rc.2 < rc.10, rc < rc.1).
+comparePrerelease compares two non-empty pre-release strings per semver §11, where numeric
+identifiers rank below non-numeric ones and a longer set of identifiers outranks a shorter one
+that it agrees with (rc.2 < rc.10, rc < rc.1).
 */
 func comparePrerelease(left, right string) int {
     leftIdentifiers := strings.Split(left, ".")

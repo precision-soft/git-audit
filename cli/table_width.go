@@ -7,13 +7,9 @@ import (
 )
 
 /*
-Table width policy: minimum floor, no maximum cap.
-
-Melody's TableMaxWidth defaults to 120 when unset, which forced wrapping on
-wide terminals and looked cramped when output was piped to a file. Instead,
-we auto-size from the controlling terminal (never below autoTableMinWidth)
-and fall back to effectively-unlimited when stdout is redirected so that the
-data — not a hardcoded constant — drives the width.
+A minimum floor and no maximum cap: melody's TableMaxWidth defaults to 120 when unset, which wraps
+on a wide terminal and on a redirected stdout alike. The width is auto-sized from the controlling
+terminal instead, and effectively unlimited when stdout is not one, so the data drives it.
 */
 
 const (

@@ -1,0 +1,97 @@
+name: ci
+
+on:
+    push:
+        branches: [ main ]
+    pull_request:
+    workflow_dispatch:
+
+# read-only on purpose: this repository is never tagged and never released, so a write-scoped token
+# would have nothing to do here but be stolen.
+permissions:
+    contents: read
+
+# a second push to the same branch makes the first run's answer worthless before it finishes
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    # mirrors .dev/validate/all.sh --e2e --audit, section for section, and checks both build
+    # configurations because the e2e harness sits behind `//go:build e2e`.
+    # There is deliberately NO gofmt check: this tree is indented with 4 spaces and `gofmt -w` would
+    # rewrite it wholesale. staticcheck does not check formatting, which is why it is safe to run.
+    go:
+        runs-on: ubuntu-latest
+        steps:
+            -   uses: actions/checkout@v4
+            # check-latest is the same decision the Dockerfile makes by leaving the base image on a
+            # floating patch tag: every vulnerability reported here lived in the standard library, so
+            # pinning the patch would freeze the vulnerability rather than the findings.
+            -   uses: actions/setup-go@v5
+                with:
+                    go-version-file: go.mod
+                    check-latest: true
+                    cache: true
+            -   name: build
+                run: go build ./...
+            -   name: vet
+                run: go vet ./...
+            -   name: vet ( e2e )
+                run: go vet -tags=e2e ./...
+            -   name: test
+                run: go test -count=1 ./...
+            # -count=1 because a cached pass would certify a binary that was never built
+            -   name: test ( e2e )
+                run: go test -tags=e2e -count=1 ./...
+            # the versions are read back out of the dev image, so a rebuild and a CI run can never
+            # disagree about which analyser produced the findings
+            -   name: read the pinned linter versions from the dev image
+                id: linters
+                run: |
+                    set -euo pipefail
+                    STATICCHECK_VERSION="$(sed -n 's/^ARG STATICCHECK_VERSION=//p' .dev/docker/Dockerfile)"
+                    GOVULNCHECK_VERSION="$(sed -n 's/^ARG GOVULNCHECK_VERSION=//p' .dev/docker/Dockerfile)"
+                    if [ -z "${STATICCHECK_VERSION}" ] || [ -z "${GOVULNCHECK_VERSION}" ]; then
+                        echo "missing ARG STATICCHECK_VERSION / ARG GOVULNCHECK_VERSION in .dev/docker/Dockerfile" >&2
+                        exit 1
+                    fi
+                    echo "staticcheck=${STATICCHECK_VERSION}" >> "${GITHUB_OUTPUT}"
+                    echo "govulncheck=${GOVULNCHECK_VERSION}" >> "${GITHUB_OUTPUT}"
+            -   name: install the linters
+                run: |
+                    set -euo pipefail
+                    go install honnef.co/go/tools/cmd/staticcheck@${{ steps.linters.outputs.staticcheck }}
+                    go install golang.org/x/vuln/cmd/govulncheck@${{ steps.linters.outputs.govulncheck }}
+            -   name: staticcheck
+                run: |
+                    set -euo pipefail
+                    staticcheck ./...
+                    staticcheck -tags=e2e ./...
+            # exits 3 on a finding, not 1, and reaches the network for the vulnerability database —
+            # which is why the local gate keeps it behind `--audit`
+            -   name: govulncheck
+                run: |
+                    set -euo pipefail
+                    govulncheck ./...
+                    govulncheck -tags=e2e ./...
+
+    # a smoke run is all a gate can afford, and the seeds that matter are already regression cases:
+    # `go test` replays everything in cli/testdata/. This job looks for new ones.
+    fuzz:
+        runs-on: ubuntu-latest
+        steps:
+            -   uses: actions/checkout@v4
+            -   uses: actions/setup-go@v5
+                with:
+                    go-version-file: go.mod
+                    check-latest: true
+                    cache: true
+            -   name: fuzz smoke
+                run: |
+                    set -euo pipefail
+                    for FUZZ_TARGET in FuzzCompareSemver FuzzSemverParts FuzzParseGithubUrl FuzzExtractChangelogEntry FuzzFoldChangelogBody; do
+                        echo "::group::${FUZZ_TARGET}"
+                        go test ./cli/ -run='^$' -fuzz="^${FUZZ_TARGET}$" -fuzztime=30s
+                        echo "::endgroup::"
+                    done

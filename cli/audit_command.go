@@ -38,8 +38,8 @@ var (
 
     /* the six Keep a Changelog sections first, then the shapes the projects also write. Every section a project
        legitimately uses has to be listed: a missing one does not merely warn, it pressures the author into
-       renaming the section to one that is accepted — which is how a release body ends up carrying two "## Fixed"
-       blocks, the second of them a "## Security" in disguise. */
+       renaming the section to one that is accepted, and a "## Security" in disguise as a second "## Fixed" is
+       worse than an unrecognised heading. */
     standardSections = map[string]bool{
         "## Added":            true,
         "## Changed":          true,
@@ -315,14 +315,12 @@ func (instance *AuditCommand) Run(
 
     envelope.Meta.DurationMilliseconds = time.Since(startedAt).Milliseconds()
 
-    if renderErr := output.Render(commandContext.Writer, envelope, option); nil != renderErr {
+    if renderErr := renderAuditOutput(commandContext.Writer, envelope, option, audits); nil != renderErr {
         return renderErr
     }
 
-    printTitleFixes(commandContext.Writer, audits)
-
     pending := collectPendingWarnings(audits)
-    modified, reviewErr := reviewWarningsInteractively(pending, exceptions)
+    modified, reviewErr := reviewWarningsInteractively(commandContext.Writer, option, pending, exceptions)
     if nil != reviewErr {
         return fmt.Errorf("review warnings: %w", reviewErr)
     }
@@ -478,9 +476,7 @@ func auditProject(client *service.GithubClient, projectConfig project.ProjectCon
         }
     }
 
-    sort.SliceStable(releaseAudits, func(leftIndex, rightIndex int) bool {
-        return releaseAudits[leftIndex].TagName < releaseAudits[rightIndex].TagName
-    })
+    sortReleaseAudits(releaseAudits)
 
     return buildProjectAudit(
         organization,
@@ -493,6 +489,17 @@ func auditProject(client *service.GithubClient, projectConfig project.ProjectCon
         submoduleTagCount,
         releaseAudits,
     ), nil
+}
+
+/*
+sortReleaseAudits orders the audited releases the way every other tag comparison in the tool does.
+A lexical order reads plausibly until a version reaches double digits, and then puts v4.1.12 above
+v4.1.9 in every table.
+*/
+func sortReleaseAudits(releaseAudits []types.ReleaseAudit) {
+    sort.SliceStable(releaseAudits, func(leftIndex, rightIndex int) bool {
+        return compareSemver(releaseAudits[leftIndex].TagName, releaseAudits[rightIndex].TagName) < 0
+    })
 }
 
 func auditRelease(
@@ -947,10 +954,19 @@ func nonStandardSections(body string) []string {
     }
 
     var found []string
+    var fence codeFenceScanner
     for _, line := range strings.Split(body, "\n") {
-        line = strings.TrimSpace(line)
-        if strings.HasPrefix(line, "## ") && false == standardSections[line] {
-            found = append(found, line)
+        if true == fence.inside(line) {
+            continue
+        }
+
+        level, text := markdownHeading(line)
+        if 2 != level {
+            continue
+        }
+
+        if section := "## " + text; false == standardSections[section] {
+            found = append(found, section)
         }
     }
 
@@ -1165,6 +1181,30 @@ func fetchPackagistVersions(packagistPackage string) PackagistAuditInfo {
         Count:    len(versions),
         Err:      nil,
     }
+}
+
+/*
+renderAuditOutput writes the envelope and, for the table format only, the follow-up title-fix
+block. A machine-readable format carries exactly one document per invocation, so anything appended
+after it leaves the caller with a stream no parser accepts.
+*/
+func renderAuditOutput(
+    writer io.Writer,
+    envelope output.Envelope,
+    option output.Option,
+    audits []types.ProjectAudit,
+) error {
+    if renderErr := output.Render(writer, envelope, option); nil != renderErr {
+        return renderErr
+    }
+
+    if output.FormatTable != option.Format {
+        return nil
+    }
+
+    printTitleFixes(writer, audits)
+
+    return nil
 }
 
 func printTitleFixes(writer io.Writer, audits []types.ProjectAudit) {

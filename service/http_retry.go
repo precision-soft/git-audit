@@ -13,9 +13,8 @@ const (
     maxAttempts    = 3
     initialBackoff = 500 * time.Millisecond
     /*
-       maxResponseBodyBytes is an effectively-unbounded ceiling that preserves the
-       prior unbounded io.ReadAll behavior while still guarding against OOM. melody's
-       httpclient defaults to 10 MiB, which a large `compare` diff can exceed.
+       an effectively-unbounded ceiling that still guards against OOM: melody's httpclient defaults
+       to 10 MiB, which a large `compare` diff can exceed.
     */
     maxResponseBodyBytes = 256 * 1024 * 1024
 )
@@ -27,9 +26,9 @@ func newHttpClient() httpclientcontract.Client {
 }
 
 /*
-requestWithRetry executes a request through melody's httpclient with retries on
-5xx/429 using exponential backoff. melody re-derives the request body from the
-options on every attempt, so no manual body rewinding is needed.
+requestWithRetry executes a request through melody's httpclient, retrying 5xx and 429 with
+exponential backoff. melody re-derives the request body from the options on every attempt, so
+nothing has to rewind it.
 */
 func requestWithRetry(
     client httpclientcontract.Client,
@@ -40,10 +39,7 @@ func requestWithRetry(
     var lastResponse httpclientcontract.Response
     var lastErr error
 
-    /*
-       Default the body cap to effectively-unbounded; a caller may still override it
-       by passing its own WithMaxResponseBodyBytes after this.
-    */
+    /* prepended, not appended, so a caller's own WithMaxResponseBodyBytes still wins */
     options = append(
         []httpclientcontract.RequestOption{httpclient.WithMaxResponseBodyBytes(maxResponseBodyBytes)},
         options...,

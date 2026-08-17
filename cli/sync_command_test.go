@@ -23,8 +23,6 @@ func TestListChangelogVersions(t *testing.T) {
     }
 }
 
-/* the fold raises the heading level and nothing else: every section keeps its own name, so a security entry
-   stays visible as one instead of being renamed into the ordinary fixes. */
 func TestFoldChangelogBody(t *testing.T) {
     body := "### Security\n\n- fixed vuln\n\n### Removed\n\n- old thing\n\n### Added\n\n- new thing\n"
 
@@ -47,8 +45,6 @@ func TestFoldChangelogBody(t *testing.T) {
     }
 }
 
-/* two different sections must not collapse onto one name: a body carrying the same heading twice reads as a
-   mistake, and it is how a security entry used to disappear among the ordinary fixes. */
 func TestFoldChangelogBodyKeepsSectionsDistinct(t *testing.T) {
     body := "### Fixed\n\n- a bug\n\n### Security\n\n- a vuln\n"
 
@@ -198,5 +194,89 @@ func TestBuildReleaseNameReturnsEmptyWhenProjectNameMissing(t *testing.T) {
     name := buildReleaseName("", "v2.0.0", content)
     if "" != name {
         t.Errorf("expected empty name when projectName is empty, got %q", name)
+    }
+}
+
+func TestFoldChangelogBodyLeavesFencedCodeBlocksAlone(t *testing.T) {
+    body := "### Added\n\n" +
+        "- Documented the heading shape\n\n" +
+        "```markdown\n" +
+        "### Security\n" +
+        "```\n"
+
+    folded := foldChangelogBody(body)
+
+    if false == strings.Contains(folded, "## Added") {
+        t.Errorf("expected the real heading to be lifted to h2, got:\n%s", folded)
+    }
+    if false == strings.Contains(folded, "### Security") {
+        t.Errorf("expected the fenced sample heading to survive untouched, got:\n%s", folded)
+    }
+}
+
+/* the two properties: folding twice changes nothing more, and no h3 survives outside a fence */
+func FuzzFoldChangelogBody(f *testing.F) {
+    for _, seed := range []string{
+        "### Added\n\n- one\n",
+        "### Security\n\n- two\n\n### Removed\n\n- three\n",
+        "### Added\n\n```markdown\n### Security\n```\n",
+        "#### Deeper\n\n### Added\n",
+        "", "###", "### ", "###  spaced  \r\n", "```\n### inside\n",
+    } {
+        f.Add(seed)
+    }
+
+    f.Fuzz(func(t *testing.T, body string) {
+        folded := foldChangelogBody(body)
+
+        if refolded := foldChangelogBody(folded); refolded != folded {
+            t.Fatalf("foldChangelogBody is not idempotent for %q: %q then %q", body, folded, refolded)
+        }
+
+        var fence codeFenceScanner
+        for _, line := range strings.Split(folded, "\n") {
+            if true == fence.inside(line) {
+                continue
+            }
+            if level, _ := markdownHeading(line); 3 == level {
+                t.Fatalf("foldChangelogBody left %q at the changelog nesting level, from %q", line, body)
+            }
+        }
+    })
+}
+
+func TestFoldChangelogBodyLiftsAnIndentedHeading(t *testing.T) {
+    folded := foldChangelogBody(" ### Security\n\n- one\n   ### Removed\n\n- two\n")
+
+    if false == strings.Contains(folded, "## Security") || true == strings.Contains(folded, "### Security") {
+        t.Errorf("expected the indented h3 to be lifted, got:\n%s", folded)
+    }
+    if false == strings.Contains(folded, "## Removed") || true == strings.Contains(folded, "### Removed") {
+        t.Errorf("expected the three-column indented h3 to be lifted, got:\n%s", folded)
+    }
+}
+
+func TestFoldChangelogBodyLeavesAnIndentedCodeBlockAlone(t *testing.T) {
+    folded := foldChangelogBody("### Added\n\n- one\n\n    ### Security\n")
+
+    if false == strings.Contains(folded, "    ### Security") {
+        t.Errorf("a four-column indent is an indented code block and must survive, got:\n%s", folded)
+    }
+}
+
+func TestFoldChangelogBodyDropsStrayCarriageReturns(t *testing.T) {
+    folded := foldChangelogBody("### Added\r\n\r\n- one \r \n- two\r\n")
+
+    if true == strings.Contains(folded, "\r") {
+        t.Fatalf("expected no carriage return in the folded body, got %q", folded)
+    }
+    if refolded := foldChangelogBody(folded); refolded != folded {
+        t.Errorf("expected the fold to settle, got %q then %q", folded, refolded)
+    }
+}
+
+func TestCompareReleaseBodyIgnoresLineEndingNoise(t *testing.T) {
+    if false == compareReleaseBody("## Added\r\n\r\n- one \r \n", "## Added\n\n- one\n") {
+        t.Error("expected bodies differing only in line endings and trailing whitespace to compare equal")
     }
 }

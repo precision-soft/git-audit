@@ -11,11 +11,8 @@ import (
 const cloneRootDirectory = ".dev-data/clones"
 
 /*
-EnsureCloneReset clones repositoryUrl into .dev-data/clones/<name>/ when the
-target directory is missing. If it already exists, the working tree is
-hard-reset to origin (fetch → checkout default branch → reset --hard
-origin/<branch> → clean -fdx), discarding any local changes. Returns the
-relative path of the local clone.
+EnsureCloneReset clones repositoryUrl into .dev-data/clones/<name>/, or hard-resets the clone to
+origin if it is already there — discarding any local change in it — and returns its relative path.
 */
 func EnsureCloneReset(name, repositoryUrl string) (string, error) {
     if "" == name {

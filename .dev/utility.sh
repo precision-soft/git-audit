@@ -375,10 +375,6 @@ ensure_docker_env_files() {
     ensure_dev_data_host_files
 }
 
-# Bind-mounted files (e.g. .dev-data/bash/.bash_history) must exist on the host
-# as regular files before docker compose up. If missing, Docker auto-creates a
-# directory at that path, which silently breaks features like bash history
-# persistence. This converts any wrong-typed host path back to an empty file.
 ensure_dev_data_host_files() {
     local DEV_DATA_FILE_PATH_LIST=(
         "${ROOT_DIR}/.dev-data/bash/.bash_history"
