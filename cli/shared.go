@@ -29,13 +29,13 @@ three columns, and a fourth makes the line an indented code block instead. A hea
 names no section.
 */
 func markdownHeading(line string) (int, string) {
-    if markdownIndentWidth(line) > 3 {
+    if 3 < markdownIndentWidth(line) {
         return 0, ""
     }
 
     trimmed := strings.TrimSpace(line)
     level := len(trimmed) - len(strings.TrimLeft(trimmed, "#"))
-    if level < 1 || level > 6 {
+    if 1 > level || 6 < level {
         return 0, ""
     }
 
@@ -105,11 +105,11 @@ func resolveGithubClient(
     runtimeInstance runtimecontract.Runtime,
     commandContext *clicontract.CommandContext,
 ) (*service.GithubClient, error) {
+    releaseService := service.GithubReleaseServiceMustFromRuntime(runtimeInstance)
     cliToken := strings.TrimSpace(commandContext.String(flagToken))
     if "" != cliToken {
-        return service.NewGithubClient(cliToken), nil
+        return releaseService.NewClientWithToken(cliToken), nil
     }
-    releaseService := service.GithubReleaseServiceMustFromRuntime(runtimeInstance)
     if "" == releaseService.Token() {
         return nil, fmt.Errorf("github token required (--token or GITHUB_TOKEN env)")
     }
@@ -159,7 +159,7 @@ func parseGithubUrl(url string) (organization, repository string) {
     trimmed = strings.TrimSuffix(trimmed, ".git")
 
     parts := strings.Split(trimmed, "/")
-    if len(parts) < 2 {
+    if 2 > len(parts) {
         return "", trimmed
     }
 
@@ -167,7 +167,7 @@ func parseGithubUrl(url string) (organization, repository string) {
 }
 
 func resolveChangelogPaths(projectConfig project.ProjectConfig) []string {
-    if len(projectConfig.ChangelogPaths) > 0 {
+    if 0 < len(projectConfig.ChangelogPaths) {
         return projectConfig.ChangelogPaths
     }
 
@@ -176,7 +176,7 @@ func resolveChangelogPaths(projectConfig project.ProjectConfig) []string {
 
 func extractChangelogEntry(content string, version string) (string, bool) {
     matchIndexes := changelogHeadingV2.FindAllStringSubmatchIndex(content, -1)
-    if len(matchIndexes) > 0 {
+    if 0 < len(matchIndexes) {
         for matchIndex, match := range matchIndexes {
             currentVersion := content[match[2]:match[3]]
             if currentVersion != version {
@@ -194,7 +194,7 @@ func extractChangelogEntry(content string, version string) (string, bool) {
     }
 
     matchIndexes = changelogHeadingV1.FindAllStringSubmatchIndex(content, -1)
-    if len(matchIndexes) > 0 {
+    if 0 < len(matchIndexes) {
         for matchIndex, match := range matchIndexes {
             currentVersion := content[match[2]:match[3]]
             if currentVersion != version {
@@ -235,7 +235,7 @@ func stripTrailingLinkReferences(body string) string {
 
     lines := strings.Split(body, "\n")
     cutoff := len(lines)
-    for index := len(lines) - 1; index >= 0; index-- {
+    for index := len(lines) - 1; 0 <= index; index-- {
         trimmed := strings.TrimSpace(lines[index])
         if "" == trimmed {
             cutoff = index
@@ -257,7 +257,7 @@ func hasTrailingChangelogLinkReferences(body string) bool {
         return false
     }
     lines := strings.Split(trimmed, "\n")
-    for index := len(lines) - 1; index >= 0; index-- {
+    for index := len(lines) - 1; 0 <= index; index-- {
         line := strings.TrimSpace(lines[index])
         if "" == line {
             continue
@@ -270,7 +270,7 @@ func hasTrailingChangelogLinkReferences(body string) bool {
 func compareSemver(left, right string) int {
     leftParts := semverParts(left)
     rightParts := semverParts(right)
-    for index := 0; index < 3; index++ {
+    for index := 0; 3 > index; index++ {
         if leftParts[index] != rightParts[index] {
             if leftParts[index] < rightParts[index] {
                 return -1
@@ -307,13 +307,13 @@ func compareSemver(left, right string) int {
 
 func semverPrerelease(tag string) string {
     trimmed := strings.TrimPrefix(tag, "v")
-    if slashIndex := strings.LastIndex(trimmed, "/v"); slashIndex >= 0 {
+    if slashIndex := strings.LastIndex(trimmed, "/v"); 0 <= slashIndex {
         trimmed = trimmed[slashIndex+2:]
     }
-    if plusIndex := strings.IndexByte(trimmed, '+'); plusIndex >= 0 {
+    if plusIndex := strings.IndexByte(trimmed, '+'); 0 <= plusIndex {
         trimmed = trimmed[:plusIndex]
     }
-    if dashIndex := strings.IndexByte(trimmed, '-'); dashIndex >= 0 {
+    if dashIndex := strings.IndexByte(trimmed, '-'); 0 <= dashIndex {
         return trimmed[dashIndex+1:]
     }
     return ""
@@ -375,15 +375,15 @@ func comparePrereleaseIdentifier(left, right string) int {
 
 func semverParts(tag string) [3]int {
     trimmed := strings.TrimPrefix(tag, "v")
-    if slashIndex := strings.LastIndex(trimmed, "/v"); slashIndex >= 0 {
+    if slashIndex := strings.LastIndex(trimmed, "/v"); 0 <= slashIndex {
         trimmed = trimmed[slashIndex+2:]
     }
-    if suffixIndex := strings.IndexAny(trimmed, "-+"); suffixIndex >= 0 {
+    if suffixIndex := strings.IndexAny(trimmed, "-+"); 0 <= suffixIndex {
         trimmed = trimmed[:suffixIndex]
     }
     var parts [3]int
     for index, segment := range strings.SplitN(trimmed, ".", 3) {
-        if index >= 3 {
+        if 3 <= index {
             break
         }
         if value, atoiErr := strconv.Atoi(segment); nil == atoiErr {

@@ -1,4 +1,4 @@
-FROM golang:1.25-alpine
+FROM golang:1.26-alpine
 
 ARG DOCKER_PATH
 ARG WORKDIR
@@ -15,9 +15,9 @@ ENV GOCACHE=/go/cache/go-build
 ENV GOPRIVATE=github.com/precision-soft
 ENV GONOSUMDB=github.com/precision-soft
 
-RUN apk add --update --no-cache git shadow bash
+RUN apk add --update --no-cache git shadow bash gcc musl-dev
 
-ARG STATICCHECK_VERSION=v0.7.0
+ARG STATICCHECK_VERSION=v0.8.1
 RUN go install honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}
 
 ARG GOVULNCHECK_VERSION=v1.7.0

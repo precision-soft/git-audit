@@ -1,9 +1,12 @@
 package cli
 
 import (
+    "fmt"
+    "reflect"
     "testing"
     "time"
 
+    "github.com/precision-soft/git-audit/config/project"
     "github.com/precision-soft/git-audit/types"
 )
 
@@ -142,5 +145,16 @@ func TestParseSelection(t *testing.T) {
                 break
             }
         }
+    }
+}
+
+func TestRecomputeProjectAggregatesKeepsAFetchErrorAudit(t *testing.T) {
+    audit := buildFetchErrorAudit(project.ProjectConfig{GithubUrl: "https://github.com/acme/widget"}, fmt.Errorf("get tags: http 500"))
+    expected := audit
+
+    recomputeProjectAggregates(&audit)
+
+    if false == reflect.DeepEqual(expected, audit) {
+        t.Fatalf("a fetch-error audit has nothing to aggregate and must stay as built, got %#v", audit)
     }
 }

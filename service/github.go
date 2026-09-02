@@ -14,6 +14,7 @@ import (
 )
 
 const githubApiBase = "https://api.github.com"
+const githubRawBase = "https://raw.githubusercontent.com"
 const perPage = 100
 
 type RateLimitInfo struct {
@@ -30,14 +31,20 @@ type GithubTag struct {
     CommitSHA string `json:"commitSha"`
 }
 
+type GithubAsset struct {
+    Name   string `json:"name"`
+    Digest string `json:"digest"`
+}
+
 type GithubRelease struct {
-    ID              int64  `json:"id"`
-    TagName         string `json:"tag_name"`
-    Name            string `json:"name"`
-    Body            string `json:"body"`
-    Draft           bool   `json:"draft"`
-    Prerelease      bool   `json:"prerelease"`
-    TargetCommitish string `json:"target_commitish"`
+    ID              int64         `json:"id"`
+    TagName         string        `json:"tag_name"`
+    Name            string        `json:"name"`
+    Body            string        `json:"body"`
+    Draft           bool          `json:"draft"`
+    Prerelease      bool          `json:"prerelease"`
+    TargetCommitish string        `json:"target_commitish"`
+    Assets          []GithubAsset `json:"assets"`
 }
 
 type CompareFile struct {
@@ -58,19 +65,36 @@ type CompareResponse struct {
     Files        []CompareFile   `json:"files"`
 }
 
+func newHttpStatusError(response httpclientcontract.Response) *HttpStatusError {
+    return &HttpStatusError{
+        StatusCode: response.StatusCode(),
+        Body:       string(response.Body()),
+    }
+}
+
+type HttpStatusError struct {
+    StatusCode int
+    Body       string
+}
+
+func (instance *HttpStatusError) Error() string {
+    return fmt.Sprintf("http %d: %s", instance.StatusCode, instance.Body)
+}
+
 type GithubClient struct {
     token        string
     httpClient   httpclientcontract.Client
     rateLimit    RateLimitInfo
     rateLimitMux sync.Mutex
+    cacheDir     string
+    apiBase      string
+    rawBase      string
 }
 
 func githubApiHeaders() map[string]string {
     return map[string]string{
         "Accept":               "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
-        "Cache-Control":        "no-cache, no-store",
-        "Pragma":               "no-cache",
     }
 }
 
@@ -78,6 +102,24 @@ func NewGithubClient(token string) *GithubClient {
     return &GithubClient{
         token:      token,
         httpClient: newHttpClient(),
+        apiBase:    githubApiBase,
+        rawBase:    githubRawBase,
+    }
+}
+
+func (instance *GithubClient) SetCacheDir(directory string) {
+    instance.cacheDir = strings.TrimSpace(directory)
+}
+
+/* an empty base keeps the public host, so a blank parameter can never redirect a request to "/repos/..." */
+func (instance *GithubClient) SetEndpoints(apiBase, rawBase string) {
+    instance.apiBase = strings.TrimRight(strings.TrimSpace(apiBase), "/")
+    if "" == instance.apiBase {
+        instance.apiBase = githubApiBase
+    }
+    instance.rawBase = strings.TrimRight(strings.TrimSpace(rawBase), "/")
+    if "" == instance.rawBase {
+        instance.rawBase = githubRawBase
     }
 }
 
@@ -133,10 +175,10 @@ func (instance *GithubClient) GetTags(organization, repository string) ([]Github
     var all []GithubTag
 
     for page := 1; ; page++ {
-        url := fmt.Sprintf("%s/repos/%s/%s/tags?per_page=%d&page=%d", githubApiBase, organization, repository, perPage, page)
+        urlString := fmt.Sprintf("%s/repos/%s/%s/tags?per_page=%d&page=%d", instance.apiBase, organization, repository, perPage, page)
 
         var batch []githubTagApiResponse
-        if getErr := instance.get(url, &batch); nil != getErr {
+        if getErr := instance.get(urlString, &batch); nil != getErr {
             return nil, fmt.Errorf("page %d: %w", page, getErr)
         }
 
@@ -147,7 +189,7 @@ func (instance *GithubClient) GetTags(organization, repository string) ([]Github
             })
         }
 
-        if len(batch) < perPage {
+        if perPage > len(batch) {
             break
         }
     }
@@ -159,16 +201,16 @@ func (instance *GithubClient) GetReleases(organization, repository string) ([]Gi
     var all []GithubRelease
 
     for page := 1; ; page++ {
-        url := fmt.Sprintf("%s/repos/%s/%s/releases?per_page=%d&page=%d", githubApiBase, organization, repository, perPage, page)
+        urlString := fmt.Sprintf("%s/repos/%s/%s/releases?per_page=%d&page=%d", instance.apiBase, organization, repository, perPage, page)
 
         var batch []GithubRelease
-        if getErr := instance.get(url, &batch); nil != getErr {
+        if getErr := instance.get(urlString, &batch); nil != getErr {
             return nil, fmt.Errorf("page %d: %w", page, getErr)
         }
 
         all = append(all, batch...)
 
-        if len(batch) < perPage {
+        if perPage > len(batch) {
             break
         }
     }
@@ -178,7 +220,8 @@ func (instance *GithubClient) GetReleases(organization, repository string) ([]Gi
 
 func (instance *GithubClient) GetFileContentAtRef(organization, repository, path, ref string) (string, error) {
     endpoint := fmt.Sprintf(
-        "https://raw.githubusercontent.com/%s/%s/%s/%s",
+        "%s/%s/%s/%s/%s",
+        instance.rawBase,
         organization,
         repository,
         ref,
@@ -190,13 +233,13 @@ func (instance *GithubClient) GetFileContentAtRef(organization, repository, path
         options = append(options, httpclient.WithBearerToken(instance.token))
     }
 
-    response, doErr := requestWithRetry(instance.httpClient, http.MethodGet, endpoint, options...)
-    if nil != doErr {
-        return "", doErr
+    response, requestErr := requestWithRetry(instance.httpClient, http.MethodGet, endpoint, options...)
+    if nil != requestErr {
+        return "", requestErr
     }
 
     if http.StatusOK != response.StatusCode() {
-        return "", fmt.Errorf("http %d: %s", response.StatusCode(), string(response.Body()))
+        return "", newHttpStatusError(response)
     }
 
     return string(response.Body()), nil
@@ -205,7 +248,7 @@ func (instance *GithubClient) GetFileContentAtRef(organization, repository, path
 func (instance *GithubClient) CompareTags(organization, repository, base, head string) (*CompareResponse, error) {
     endpoint := fmt.Sprintf(
         "%s/repos/%s/%s/compare/%s...%s",
-        githubApiBase,
+        instance.apiBase,
         organization,
         repository,
         base,
@@ -219,15 +262,15 @@ func (instance *GithubClient) CompareTags(organization, repository, base, head s
         options = append(options, httpclient.WithBearerToken(instance.token))
     }
 
-    response, doErr := requestWithRetry(instance.httpClient, http.MethodGet, endpoint, options...)
-    if nil != doErr {
-        return nil, doErr
+    response, requestErr := requestWithRetry(instance.httpClient, http.MethodGet, endpoint, options...)
+    if nil != requestErr {
+        return nil, requestErr
     }
 
     instance.recordRateLimit(response)
 
     if http.StatusOK != response.StatusCode() {
-        return nil, fmt.Errorf("http %d: %s", response.StatusCode(), string(response.Body()))
+        return nil, newHttpStatusError(response)
     }
 
     var compareResponse CompareResponse
@@ -243,7 +286,7 @@ func (instance *GithubClient) UpdateRelease(organization, repository string, rel
         return fmt.Errorf("github token required to update release")
     }
 
-    endpoint := fmt.Sprintf("%s/repos/%s/%s/releases/%d", githubApiBase, organization, repository, releaseId)
+    endpoint := fmt.Sprintf("%s/repos/%s/%s/releases/%d", instance.apiBase, organization, repository, releaseId)
 
     payload := struct {
         Body string `json:"body"`
@@ -259,38 +302,53 @@ func (instance *GithubClient) UpdateRelease(organization, repository string, rel
         httpclient.WithBearerToken(instance.token),
     }
 
-    response, doErr := requestWithRetry(instance.httpClient, http.MethodPatch, endpoint, options...)
-    if nil != doErr {
-        return doErr
+    response, requestErr := requestWithRetry(instance.httpClient, http.MethodPatch, endpoint, options...)
+    if nil != requestErr {
+        return requestErr
     }
 
     instance.recordRateLimit(response)
 
-    if response.StatusCode() < 200 || response.StatusCode() >= 300 {
-        return fmt.Errorf("http %d: %s", response.StatusCode(), string(response.Body()))
+    if 200 > response.StatusCode() || 300 <= response.StatusCode() {
+        return newHttpStatusError(response)
     }
 
     return nil
 }
 
-func (instance *GithubClient) get(url string, destination any) error {
+func (instance *GithubClient) get(urlString string, destination any) error {
+    headers := githubApiHeaders()
+    cached := readCachedResponse(instance.cacheDir, urlString)
+    if nil != cached && "" != cached.EntityTag {
+        headers["If-None-Match"] = cached.EntityTag
+    }
     options := []httpclientcontract.RequestOption{
-        httpclient.WithHeaders(githubApiHeaders()),
+        httpclient.WithHeaders(headers),
     }
     if "" != instance.token {
         options = append(options, httpclient.WithBearerToken(instance.token))
     }
 
-    response, doErr := requestWithRetry(instance.httpClient, http.MethodGet, url, options...)
-    if nil != doErr {
-        return doErr
+    response, requestErr := requestWithRetry(instance.httpClient, http.MethodGet, urlString, options...)
+    if nil != requestErr {
+        return requestErr
     }
 
     instance.recordRateLimit(response)
 
-    if response.StatusCode() < 200 || response.StatusCode() >= 300 {
-        return fmt.Errorf("http %d: %s", response.StatusCode(), string(response.Body()))
+    if http.StatusNotModified == response.StatusCode() {
+        if nil == cached {
+            return fmt.Errorf("http 304 without a cached response")
+        }
+        return json.Unmarshal(cached.Body, destination)
     }
+
+    if 200 > response.StatusCode() || 300 <= response.StatusCode() {
+        return newHttpStatusError(response)
+    }
+
+    /* a cache that cannot be written is no cache; the response in hand is still the answer */
+    writeCachedResponse(instance.cacheDir, urlString, response.Headers().Get("ETag"), response.Body())
 
     return json.Unmarshal(response.Body(), destination)
 }

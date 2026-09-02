@@ -138,7 +138,7 @@ func (instance Exceptions) add(repository, version, level, issue string) {
     )
 }
 
-var levelNames = []string{"integrity", "distribution", "changelog", "diff", "presentation"}
+var levelNames = []string{"integrity", "distribution", "changelog", "diff", "presentation", "supply-chain"}
 
 func releaseLevels(release *types.ReleaseAudit) map[string]*types.LevelResult {
     return map[string]*types.LevelResult{
@@ -147,6 +147,7 @@ func releaseLevels(release *types.ReleaseAudit) map[string]*types.LevelResult {
         "changelog":    &release.Changelog,
         "diff":         &release.Diff,
         "presentation": &release.Presentation,
+        "supply-chain": &release.SupplyChain,
     }
 }
 
@@ -199,6 +200,10 @@ func applyExceptions(audits []types.ProjectAudit, exceptions Exceptions) {
 }
 
 func recomputeProjectAggregates(audit *types.ProjectAudit) {
+    if "" != audit.FetchError {
+        return
+    }
+
     statuses := make(map[string]types.LevelStatus, len(levelNames))
     warningCounts := make(map[string]int, len(levelNames))
 
@@ -207,6 +212,9 @@ func recomputeProjectAggregates(audit *types.ProjectAudit) {
     }
     if types.LevelNotApplicable == audit.DistributionStatus {
         statuses["distribution"] = types.LevelNotApplicable
+    }
+    if false == hasLevelResults(audit, "supply-chain") {
+        statuses["supply-chain"] = types.LevelNotApplicable
     }
 
     for releaseIndex := range audit.Releases {
@@ -229,6 +237,7 @@ func recomputeProjectAggregates(audit *types.ProjectAudit) {
     audit.ChangelogStatus = statuses["changelog"]
     audit.DiffStatus = statuses["diff"]
     audit.PresentationStatus = statuses["presentation"]
+    audit.SupplyChainStatus = statuses["supply-chain"]
 
     audit.ChangelogDisplay = formatLevelDisplay(statuses["changelog"], warningCounts["changelog"])
     audit.DiffDisplay = formatLevelDisplay(statuses["diff"], warningCounts["diff"])
@@ -249,8 +258,19 @@ func recomputeProjectAggregates(audit *types.ProjectAudit) {
     }
 }
 
+/* a level nobody ran leaves every release at n/a (or unset, for audits built before the level existed) */
+func hasLevelResults(audit *types.ProjectAudit, level string) bool {
+    for releaseIndex := range audit.Releases {
+        status := releaseLevels(&audit.Releases[releaseIndex])[level].Status
+        if "" != status && types.LevelNotApplicable != status {
+            return true
+        }
+    }
+    return false
+}
+
 func formatLevelDisplay(status types.LevelStatus, warningCount int) string {
-    if types.LevelWarning == status && warningCount > 0 {
+    if types.LevelWarning == status && 0 < warningCount {
         return fmt.Sprintf("warning (%d)", warningCount)
     }
     return string(status)
@@ -336,12 +356,12 @@ func parseSelection(input string, max int) []int {
     var result []int
 
     for _, part := range strings.Fields(input) {
-        if separatorIndex := strings.Index(part, "-"); separatorIndex > 0 {
+        if separatorIndex := strings.Index(part, "-"); 0 < separatorIndex {
             from, fromErr := strconv.Atoi(part[:separatorIndex])
             to, toErr := strconv.Atoi(part[separatorIndex+1:])
             if nil == fromErr && nil == toErr {
                 for value := from; value <= to; value++ {
-                    if value >= 1 && value <= max && false == seen[value-1] {
+                    if 1 <= value && max >= value && false == seen[value-1] {
                         seen[value-1] = true
                         result = append(result, value-1)
                     }
@@ -349,7 +369,7 @@ func parseSelection(input string, max int) []int {
             }
         } else {
             number, parseErr := strconv.Atoi(part)
-            if nil == parseErr && number >= 1 && number <= max && false == seen[number-1] {
+            if nil == parseErr && 1 <= number && max >= number && false == seen[number-1] {
                 seen[number-1] = true
                 result = append(result, number-1)
             }

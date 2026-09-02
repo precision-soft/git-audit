@@ -52,12 +52,23 @@ func (instance *fakeResponse) IsServerError() bool {
 }
 
 type fakeHttpClient struct {
-    response httpclientcontract.Response
-    err      error
+    response  httpclientcontract.Response
+    responses map[string]httpclientcontract.Response
+    err       error
+    requests  []string
 }
 
-func (instance *fakeHttpClient) Get(string, ...httpclientcontract.RequestOption) (httpclientcontract.Response, error) {
+func (instance *fakeHttpClient) respond(url string) (httpclientcontract.Response, error) {
+    instance.requests = append(instance.requests, url)
+    if response, routed := instance.responses[url]; true == routed {
+        return response, nil
+    }
+
     return instance.response, instance.err
+}
+
+func (instance *fakeHttpClient) Get(url string, _ ...httpclientcontract.RequestOption) (httpclientcontract.Response, error) {
+    return instance.respond(url)
 }
 
 func (instance *fakeHttpClient) Post(string, any, ...httpclientcontract.RequestOption) (httpclientcontract.Response, error) {
@@ -76,8 +87,8 @@ func (instance *fakeHttpClient) Delete(string, ...httpclientcontract.RequestOpti
     return instance.response, instance.err
 }
 
-func (instance *fakeHttpClient) Request(string, string, ...httpclientcontract.RequestOption) (httpclientcontract.Response, error) {
-    return instance.response, instance.err
+func (instance *fakeHttpClient) Request(_ string, url string, _ ...httpclientcontract.RequestOption) (httpclientcontract.Response, error) {
+    return instance.respond(url)
 }
 
 func (instance *fakeHttpClient) RequestStream(string, string, ...httpclientcontract.RequestOption) (httpclientcontract.StreamResponse, error) {

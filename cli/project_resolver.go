@@ -16,23 +16,27 @@ them: a name that is not in the list is audited ad hoc from that URL, and a name
 cannot have its URL overridden.
 */
 func resolveTargetProjects(repositoryFilter, repositoryUrl string) ([]project.ProjectConfig, error) {
+    return resolveTargetProjectsFrom(project.Projects, repositoryFilter, repositoryUrl)
+}
+
+func resolveTargetProjectsFrom(available []project.ProjectConfig, repositoryFilter, repositoryUrl string) ([]project.ProjectConfig, error) {
     filters := splitRepoFilters(repositoryFilter)
 
     if 0 == len(filters) {
         if "" != repositoryUrl {
             return nil, fmt.Errorf("--repo-url requires --repo")
         }
-        return project.Projects, nil
+        return available, nil
     }
 
-    if len(filters) > 1 && "" != repositoryUrl {
+    if 1 < len(filters) && "" != repositoryUrl {
         return nil, fmt.Errorf("--repo-url cannot be combined with multiple --repo values")
     }
 
     var resolved []project.ProjectConfig
     seen := make(map[string]bool)
     for _, singleFilter := range filters {
-        projects, resolveErr := resolveSingleRepoFilter(singleFilter, repositoryUrl)
+        projects, resolveErr := resolveSingleRepoFilterFrom(available, singleFilter, repositoryUrl)
         if nil != resolveErr {
             return nil, resolveErr
         }
@@ -47,9 +51,9 @@ func resolveTargetProjects(repositoryFilter, repositoryUrl string) ([]project.Pr
     return resolved, nil
 }
 
-func resolveSingleRepoFilter(repositoryFilter, repositoryUrl string) ([]project.ProjectConfig, error) {
-    filtered := filterProjects(project.Projects, repositoryFilter)
-    if len(filtered) > 1 {
+func resolveSingleRepoFilterFrom(available []project.ProjectConfig, repositoryFilter, repositoryUrl string) ([]project.ProjectConfig, error) {
+    filtered := filterProjects(available, repositoryFilter)
+    if 1 < len(filtered) {
         return nil, fmt.Errorf("ambiguous --repo %q matched %d projects", repositoryFilter, len(filtered))
     }
     if 1 == len(filtered) {

@@ -6,7 +6,7 @@ This document describes local development, testing, and contribution rules for G
 
 Prerequisites:
 
-- Go 1.25+
+- Go 1.26+
 - Docker (the repository ships a containerized development shell under [`.dev/`](./.dev/))
 
 ```bash
@@ -24,6 +24,7 @@ The gate lives in one place — [`.dev/validate/all.sh`](./.dev/validate/all.sh)
 
 ```bash
 .dev/validate/all.sh            # build, vet, test, staticcheck — on both build configurations
+.dev/validate/all.sh --e2e      # also the end-to-end suite (builds the binary) and the race detector
 .dev/validate/all.sh --audit    # also scan for known vulnerabilities (needs the network)
 ```
 
@@ -31,7 +32,7 @@ The gate lives in one place — [`.dev/validate/all.sh`](./.dev/validate/all.sh)
 
 Every test leg passes **`-count=1`**. Without it `go test` returns a cached result and prints `ok … (cached)`, which certifies a binary that was never built from the current tree. Count `--- PASS` lines (`-v`) rather than trusting `ok`.
 
-The end-to-end tests sit behind the **`e2e` build tag**, so `go test ./...` does not see them. The gate runs both configurations — `go vet`, `go vet -tags=e2e`, `go test -count=1`, `go test -tags=e2e -count=1` — because a test that only exists behind a tag is a test the default gate cannot regress.
+The end-to-end tests sit behind the **`e2e` build tag**, so `go test ./...` does not see them. The gate runs both configurations — `go vet`, `go vet -tags=e2e`, `go test -count=1`, `go test -tags=e2e -count=1` — because a test that only exists behind a tag is a test the default gate cannot regress. `--e2e` also runs `go test -race` over `cli/` and `service/`: the parallel audit shares one client across up to 32 goroutines, and the detector is the only thing that reads that.
 
 The git `pre-commit` hook ([`.dev/git-hooks/pre-commit`](./.dev/git-hooks/pre-commit)) is a deliberately thin caller of the same script (`--staged`, which does nothing unless the index carries a `.go` change). It checks and never fixes. It adds one guard CI cannot: it reads the index and rejects a force-staged `.dev-data/` path or `.dev/docker/.env.local`, both of which are gitignored and, by the time a push reaches CI, would already be in the history.
 
@@ -40,7 +41,7 @@ The git `pre-commit` hook ([`.dev/git-hooks/pre-commit`](./.dev/git-hooks/pre-co
 The dev image ([`.dev/docker/Dockerfile`](./.dev/docker/Dockerfile)) pins the two analysers, and the asymmetry with the base image is deliberate:
 
 - **staticcheck** and **govulncheck** are pinned, so the same source produces the same findings everywhere. They land in `${GOPATH}/bin`, which the module-cache volume does not cover, so they have to be baked into the image to survive a restart.
-- **The toolchain is not pinned.** `golang:1.25-alpine` stays a floating patch tag. Every vulnerability reported here so far has lived in the Go standard library, which the toolchain ships and `go.mod` does not express — so `./dc build --pull` against a newer base image is the fix, and `go list -m -u all` cannot see the problem at all. Pinning the toolchain would freeze the vulnerability rather than the findings.
+- **The toolchain is not pinned.** `golang:1.26-alpine` stays a floating patch tag. Every vulnerability reported here so far has lived in the Go standard library, which the toolchain ships and `go.mod` does not express — so `./dc build --pull` against a newer base image is the fix, and `go list -m -u all` cannot see the problem at all. Pinning the toolchain would freeze the vulnerability rather than the findings.
 
 The staticcheck section reports and moves on when the image predates the binary: a missing linter must not block a commit. Rebuild the image to switch it back on.
 
@@ -62,6 +63,12 @@ This tool is **not released**. It carries no tags and no GitHub releases; the da
 
 ## Code style
 
+- Indent Go code with four spaces. Do not run `gofmt` or `go fmt`; both replace the repository's indentation and create unrelated churn.
+- Use singular package, file, and type names, descriptive camel-case identifiers, and camel-case acronyms such as `urlString`, `httpClient`, and `userId`.
+- Name every method receiver `instance`.
+- Put constants on the left of comparisons, including ordered comparisons, and express boolean conditions explicitly without `!`.
+- Use single-star `/* ... */` comments. Line comments are reserved for build, embed, generated-code, and linter directives that require them.
+- Keep exported fields before unexported fields and prefer one major type per file.
 - No raw `panic` — use typed or sentinel errors, and wrap with `%w` where the caller may want to unwrap.
 - Plain `err` is fine when it is the only error in scope; with several in one scope, name them (`validationErr`, `dispatchErr`).
 - Constructors go immediately before the type they construct.

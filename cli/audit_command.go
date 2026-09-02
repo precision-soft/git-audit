@@ -20,12 +20,16 @@ import (
 )
 
 const (
-    flagToken         = "token"
-    flagRepo          = "repo"
-    flagFailOnWarning = "fail-on-warning"
-    flagExceptions    = "exceptions"
-
-    auditParallelism = 4
+    flagToken             = "token"
+    flagRepo              = "repo"
+    flagFailOnWarning     = "fail-on-warning"
+    flagExceptions        = "exceptions"
+    flagConfig            = "config"
+    flagConcurrency       = "concurrency"
+    flagGithubAnnotations = "github-annotations"
+    flagCacheDir          = "cache-dir"
+    flagSupplyChain       = "supply-chain"
+    flagSupplyChainFail   = "supply-chain-fail"
 )
 
 var (
@@ -123,6 +127,36 @@ func (instance *AuditCommand) Flags() []clicontract.Flag {
                 Usage: "path to exceptions JSON file",
                 Value: "exceptions.json",
             },
+            &clicontract.StringFlag{
+                Name:  flagConfig,
+                Usage: "path to a JSON project manifest (mode: merge or replace)",
+                Value: "",
+            },
+            &clicontract.IntFlag{
+                Name:  flagConcurrency,
+                Usage: fmt.Sprintf("parallel project audits (%d-%d)", minConcurrency, maxConcurrency),
+                Value: 4,
+            },
+            &clicontract.BoolFlag{
+                Name:  flagGithubAnnotations,
+                Usage: "emit GitHub workflow annotations on stderr",
+                Value: false,
+            },
+            &clicontract.StringFlag{
+                Name:  flagCacheDir,
+                Usage: "directory for an ETag response cache (off unless set)",
+                Value: "",
+            },
+            &clicontract.StringFlag{
+                Name:  flagSupplyChain,
+                Usage: "opt-in checks: signed-tags,checksums,sbom,attestations,all",
+                Value: "",
+            },
+            &clicontract.BoolFlag{
+                Name:  flagSupplyChainFail,
+                Usage: "make supply-chain findings failures instead of warnings",
+                Value: false,
+            },
         },
     )
 }
@@ -137,6 +171,11 @@ func (instance *AuditCommand) Run(
     repositoryUrl := strings.TrimSpace(commandContext.String(flagRepoUrl))
     failOnWarning := commandContext.Bool(flagFailOnWarning)
     exceptionsFile := strings.TrimSpace(commandContext.String(flagExceptions))
+    projectConfigFile := strings.TrimSpace(commandContext.String(flagConfig))
+    parallelism := commandContext.Int(flagConcurrency)
+    if validateErr := validateConcurrency(parallelism); nil != validateErr {
+        return validateErr
+    }
 
     exceptions, loadErr := loadExceptions(exceptionsFile)
     if nil != loadErr {
@@ -147,7 +186,12 @@ func (instance *AuditCommand) Run(
     if nil != resolveErr {
         return resolveErr
     }
-    projects, resolveErr := resolveTargetProjects(repositoryFilter, repositoryUrl)
+    githubClient.SetCacheDir(strings.TrimSpace(commandContext.String(flagCacheDir)))
+    availableProjects, resolveErr := loadProjectManifest(projectConfigFile, project.Projects)
+    if nil != resolveErr {
+        return resolveErr
+    }
+    projects, resolveErr := resolveTargetProjectsFrom(availableProjects, repositoryFilter, repositoryUrl)
     if nil != resolveErr {
         return resolveErr
     }
@@ -156,9 +200,16 @@ func (instance *AuditCommand) Run(
         option.TableMaxWidth = autoTableMaxWidth()
     }
 
-    audits := auditProjectsParallel(githubClient, projects, auditParallelism)
+    audits := auditProjectsParallel(githubClient, projects, parallelism)
+    if supplyErr := applySupplyChainAudits(githubClient, audits, commandContext.String(flagSupplyChain), commandContext.Bool(flagSupplyChainFail)); nil != supplyErr {
+        return supplyErr
+    }
 
     applyExceptions(audits, exceptions)
+
+    if true == commandContext.Bool(flagGithubAnnotations) {
+        renderGithubAnnotations(commandContext.ErrWriter, audits)
+    }
 
     hasFailure := false
     hasWarning := false
@@ -190,125 +241,7 @@ func (instance *AuditCommand) Run(
     envelope := output.NewEnvelope(meta)
 
     if option.Format == output.FormatTable {
-        builder := output.NewTableBuilder()
-        builder.AddSummaryLine(fmt.Sprintf("projects: %d | status: %s", len(audits), globalStatus))
-
-        if rateLimitLine := formatRateLimitLine(githubClient.RateLimit()); "" != rateLimitLine {
-            builder.AddSummaryLine(rateLimitLine)
-        }
-
-        summaryBlock := builder.AddBlock(
-            "SUMMARY",
-            []string{"repo", "tags", "submod", "releases", "packagist", "integrity", "distribution", "changelog", "diff", "presentation", "status"},
-        )
-
-        for _, audit := range audits {
-            packagistColumn := "-"
-            if audit.PackagistCount >= 0 {
-                packagistColumn = fmt.Sprintf("%d", audit.PackagistCount)
-            } else if "" == audit.PackagistPackage {
-                packagistColumn = "n/a"
-            }
-
-            submoduleColumn := "-"
-            if audit.SubmoduleTagCount > 0 {
-                submoduleColumn = fmt.Sprintf("%d", audit.SubmoduleTagCount)
-            }
-
-            changelogStatus := "-"
-            if "" != audit.ChangelogDisplay {
-                changelogStatus = audit.ChangelogDisplay
-            }
-
-            diffStatus := "-"
-            if "" != audit.DiffDisplay {
-                diffStatus = audit.DiffDisplay
-            }
-
-            summaryBlock.AddRow(
-                audit.OrganizationName+"/"+audit.RepositoryName,
-                fmt.Sprintf("%d", audit.TagCount),
-                submoduleColumn,
-                fmt.Sprintf("%d", audit.ReleaseCount),
-                packagistColumn,
-                string(audit.IntegrityStatus),
-                string(audit.DistributionStatus),
-                changelogStatus,
-                diffStatus,
-                audit.PresentationDisplay,
-                string(audit.Status),
-            )
-        }
-
-        var fetchErrorAudits []types.ProjectAudit
-        for _, audit := range audits {
-            if "" != audit.FetchError {
-                fetchErrorAudits = append(fetchErrorAudits, audit)
-            }
-        }
-
-        if len(fetchErrorAudits) > 0 {
-            fetchBlock := builder.AddBlock("FETCH ERRORS", []string{"repo", "error"})
-            for _, audit := range fetchErrorAudits {
-                fetchBlock.AddRow(
-                    audit.OrganizationName+"/"+audit.RepositoryName,
-                    audit.FetchError,
-                )
-            }
-        }
-
-        type issueRow struct {
-            version  string
-            level    string
-            issue    string
-            priority int
-        }
-
-        repositoryIssueMap := make(map[string][]issueRow)
-        for _, audit := range audits {
-            repositoryKey := audit.OrganizationName + "/" + audit.RepositoryName
-            for _, release := range audit.Releases {
-                for _, issue := range release.Integrity.Issues {
-                    repositoryIssueMap[repositoryKey] = append(repositoryIssueMap[repositoryKey], issueRow{release.TagName, "integrity", issue, 0})
-                }
-                for _, issue := range release.Distribution.Issues {
-                    repositoryIssueMap[repositoryKey] = append(repositoryIssueMap[repositoryKey], issueRow{release.TagName, "distribution", issue, 1})
-                }
-                for _, issue := range release.Changelog.Issues {
-                    repositoryIssueMap[repositoryKey] = append(repositoryIssueMap[repositoryKey], issueRow{release.TagName, "changelog", issue, 2})
-                }
-                for _, issue := range release.Diff.Issues {
-                    repositoryIssueMap[repositoryKey] = append(repositoryIssueMap[repositoryKey], issueRow{release.TagName, "diff", issue, 3})
-                }
-                for _, issue := range release.Presentation.Issues {
-                    repositoryIssueMap[repositoryKey] = append(repositoryIssueMap[repositoryKey], issueRow{release.TagName, "presentation", issue, 4})
-                }
-            }
-        }
-
-        seen := make(map[string]bool)
-        for _, audit := range audits {
-            repositoryKey := audit.OrganizationName + "/" + audit.RepositoryName
-            rows, hasIssues := repositoryIssueMap[repositoryKey]
-            if false == hasIssues || true == seen[repositoryKey] {
-                continue
-            }
-            seen[repositoryKey] = true
-
-            sort.SliceStable(rows, func(leftIndex, rightIndex int) bool {
-                if rows[leftIndex].priority != rows[rightIndex].priority {
-                    return rows[leftIndex].priority < rows[rightIndex].priority
-                }
-                return rows[leftIndex].version < rows[rightIndex].version
-            })
-
-            block := builder.AddBlock(repositoryKey, []string{"version", "level", "issue"})
-            for _, row := range rows {
-                block.AddRow(row.version, row.level, row.issue)
-            }
-        }
-
-        envelope.Table = builder.Build()
+        envelope.Table = buildAuditTable(audits, globalStatus, githubClient.RateLimit())
     } else {
         envelope.Data = output.NewListPayload(audits, len(audits), option.Limit, option.Offset)
     }
@@ -341,11 +274,153 @@ func (instance *AuditCommand) Run(
     return nil
 }
 
+func buildAuditTable(audits []types.ProjectAudit, globalStatus types.Status, rateLimit service.RateLimitInfo) *output.TableData {
+    builder := output.NewTableBuilder()
+    builder.AddSummaryLine(fmt.Sprintf("projects: %d | status: %s", len(audits), globalStatus))
+
+    if rateLimitLine := formatRateLimitLine(rateLimit); "" != rateLimitLine {
+        builder.AddSummaryLine(rateLimitLine)
+    }
+
+    summaryBlock := builder.AddBlock(
+        "SUMMARY",
+        []string{"repo", "tags", "submod", "releases", "packagist", "integrity", "distribution", "changelog", "diff", "presentation", "supply-chain", "status"},
+    )
+
+    for _, audit := range audits {
+        packagistColumn := "-"
+        if 0 <= audit.PackagistCount {
+            packagistColumn = fmt.Sprintf("%d", audit.PackagistCount)
+        } else if "" == audit.PackagistPackage {
+            packagistColumn = "n/a"
+        }
+
+        submoduleColumn := "-"
+        if 0 < audit.SubmoduleTagCount {
+            submoduleColumn = fmt.Sprintf("%d", audit.SubmoduleTagCount)
+        }
+
+        changelogStatus := "-"
+        if "" != audit.ChangelogDisplay {
+            changelogStatus = audit.ChangelogDisplay
+        }
+
+        diffStatus := "-"
+        if "" != audit.DiffDisplay {
+            diffStatus = audit.DiffDisplay
+        }
+
+        summaryBlock.AddRow(
+            audit.OrganizationName+"/"+audit.RepositoryName,
+            fmt.Sprintf("%d", audit.TagCount),
+            submoduleColumn,
+            fmt.Sprintf("%d", audit.ReleaseCount),
+            packagistColumn,
+            string(audit.IntegrityStatus),
+            string(audit.DistributionStatus),
+            changelogStatus,
+            diffStatus,
+            audit.PresentationDisplay,
+            string(audit.SupplyChainStatus),
+            string(audit.Status),
+        )
+    }
+
+    var fetchErrorAudits []types.ProjectAudit
+    for _, audit := range audits {
+        if "" != audit.FetchError {
+            fetchErrorAudits = append(fetchErrorAudits, audit)
+        }
+    }
+
+    if 0 < len(fetchErrorAudits) {
+        fetchBlock := builder.AddBlock("FETCH ERRORS", []string{"repo", "error"})
+        for _, audit := range fetchErrorAudits {
+            fetchBlock.AddRow(
+                audit.OrganizationName+"/"+audit.RepositoryName,
+                audit.FetchError,
+            )
+        }
+    }
+
+    type issueRow struct {
+        version  string
+        level    string
+        issue    string
+        priority int
+    }
+
+    repositoryIssueMap := make(map[string][]issueRow)
+    for _, audit := range audits {
+        repositoryKey := audit.OrganizationName + "/" + audit.RepositoryName
+        for _, release := range audit.Releases {
+            for _, issue := range release.Integrity.Issues {
+                repositoryIssueMap[repositoryKey] = append(repositoryIssueMap[repositoryKey], issueRow{release.TagName, "integrity", issue, 0})
+            }
+            for _, issue := range release.Distribution.Issues {
+                repositoryIssueMap[repositoryKey] = append(repositoryIssueMap[repositoryKey], issueRow{release.TagName, "distribution", issue, 1})
+            }
+            for _, issue := range release.Changelog.Issues {
+                repositoryIssueMap[repositoryKey] = append(repositoryIssueMap[repositoryKey], issueRow{release.TagName, "changelog", issue, 2})
+            }
+            for _, issue := range release.Diff.Issues {
+                repositoryIssueMap[repositoryKey] = append(repositoryIssueMap[repositoryKey], issueRow{release.TagName, "diff", issue, 3})
+            }
+            for _, issue := range release.Presentation.Issues {
+                repositoryIssueMap[repositoryKey] = append(repositoryIssueMap[repositoryKey], issueRow{release.TagName, "presentation", issue, 4})
+            }
+            for _, issue := range release.SupplyChain.Issues {
+                repositoryIssueMap[repositoryKey] = append(repositoryIssueMap[repositoryKey], issueRow{release.TagName, "supply-chain", issue, 5})
+            }
+        }
+    }
+
+    seen := make(map[string]bool)
+    for _, audit := range audits {
+        repositoryKey := audit.OrganizationName + "/" + audit.RepositoryName
+        rows, hasIssues := repositoryIssueMap[repositoryKey]
+        if false == hasIssues || true == seen[repositoryKey] {
+            continue
+        }
+        seen[repositoryKey] = true
+
+        sort.SliceStable(rows, func(leftIndex, rightIndex int) bool {
+            if rows[leftIndex].priority != rows[rightIndex].priority {
+                return rows[leftIndex].priority < rows[rightIndex].priority
+            }
+            return rows[leftIndex].version < rows[rightIndex].version
+        })
+
+        block := builder.AddBlock(repositoryKey, []string{"version", "level", "issue"})
+        for _, row := range rows {
+            block.AddRow(row.version, row.level, row.issue)
+        }
+    }
+
+    return builder.Build()
+}
+
+const (
+    minConcurrency = 1
+    maxConcurrency = 32
+)
+
+func validateConcurrency(parallelism int) error {
+    if minConcurrency > parallelism || maxConcurrency < parallelism {
+        return fmt.Errorf("--concurrency must be between %d and %d", minConcurrency, maxConcurrency)
+    }
+
+    return nil
+}
+
 func auditProjectsParallel(client *service.GithubClient, projects []project.ProjectConfig, parallelism int) []types.ProjectAudit {
     audits := make([]types.ProjectAudit, len(projects))
 
-    if parallelism < 1 {
-        parallelism = 1
+    if minConcurrency > parallelism {
+        parallelism = minConcurrency
+    }
+    if maxConcurrency < parallelism {
+        parallelism = maxConcurrency
     }
     semaphore := make(chan struct{}, parallelism)
     var waitGroup sync.WaitGroup
@@ -438,7 +513,7 @@ func auditProject(client *service.GithubClient, projectConfig project.ProjectCon
 
     for index, tag := range regularTags {
         previousTagName := ""
-        if index > 0 {
+        if 0 < index {
             previousTagName = regularTags[index-1].Name
         }
 
@@ -735,7 +810,7 @@ func auditChangelog(
         }
 
         similarity := overlapRatio(normalizedReleaseBody, result.NormalizedBody)
-        if similarity < 0.60 {
+        if 0.60 > similarity {
             result.Status = types.LevelWarning
             result.Issues = append(result.Issues, fmt.Sprintf(
                 "release body and %s entry for %s differ significantly (overlap %.2f)",
@@ -808,7 +883,7 @@ func classifyDiff(
 
     if nil != release {
         normalizedBody := normalizeMarkdownBlock(release.Body)
-        if compareResponse.TotalCommits >= 3 && "" == normalizedBody {
+        if 3 <= compareResponse.TotalCommits && "" == normalizedBody {
             result.Status = maxLevelStatus(result.Status, types.LevelWarning)
             result.Issues = append(result.Issues, "release notes are empty for a non-trivial diff")
         }
@@ -883,7 +958,7 @@ func auditPresentation(
         }
 
         titleRunes := []rune(titleSummary)
-        if len(titleRunes) > 0 && false == unicode.IsUpper(titleRunes[0]) {
+        if 0 < len(titleRunes) && false == unicode.IsUpper(titleRunes[0]) {
             result.Status = types.LevelWarning
             result.Issues = append(result.Issues, fmt.Sprintf(
                 "title summary %q must start with uppercase",
@@ -911,7 +986,7 @@ func auditPresentation(
 func deriveProjectName(repository string) string {
     words := strings.Split(repository, "-")
     for index, word := range words {
-        if len(word) > 0 {
+        if 0 < len(word) {
             wordRunes := []rune(word)
             wordRunes[0] = unicode.ToUpper(wordRunes[0])
             words[index] = string(wordRunes)
@@ -940,7 +1015,7 @@ func suggestCorrectedTitle(projectName, tagName, currentTitle string) string {
 
     titleSummary := matches[3]
     summaryRunes := []rune(titleSummary)
-    if len(summaryRunes) > 0 {
+    if 0 < len(summaryRunes) {
         summaryRunes[0] = unicode.ToUpper(summaryRunes[0])
         titleSummary = string(summaryRunes)
     }
@@ -980,6 +1055,7 @@ func computeReleaseStatus(releaseAudit types.ReleaseAudit) types.Status {
         releaseAudit.Changelog.Status,
         releaseAudit.Diff.Status,
         releaseAudit.Presentation.Status,
+        releaseAudit.SupplyChain.Status,
     }
 
     for _, level := range levels {
@@ -1020,6 +1096,12 @@ func buildProjectAudit(
 
     if "" == packagistPackage {
         distributionStatus = types.LevelNotApplicable
+    }
+
+    for index := range releaseAudits {
+        if "" == releaseAudits[index].SupplyChain.Status {
+            releaseAudits[index].SupplyChain.Status = types.LevelNotApplicable
+        }
     }
 
     for _, releaseAudit := range releaseAudits {
@@ -1085,17 +1167,17 @@ func buildProjectAudit(
     }
 
     presentationDisplay := string(presentationStatus)
-    if types.LevelWarning == presentationStatus && warningCount > 0 {
+    if types.LevelWarning == presentationStatus && 0 < warningCount {
         presentationDisplay = fmt.Sprintf("warning (%d)", warningCount)
     }
 
     changelogDisplay := string(changelogStatus)
-    if types.LevelWarning == changelogStatus && changelogWarningCount > 0 {
+    if types.LevelWarning == changelogStatus && 0 < changelogWarningCount {
         changelogDisplay = fmt.Sprintf("warning (%d)", changelogWarningCount)
     }
 
     diffDisplay := string(diffStatus)
-    if types.LevelWarning == diffStatus && diffWarningCount > 0 {
+    if types.LevelWarning == diffStatus && 0 < diffWarningCount {
         diffDisplay = fmt.Sprintf("warning (%d)", diffWarningCount)
     }
 
@@ -1116,6 +1198,7 @@ func buildProjectAudit(
         DiffStatus:          diffStatus,
         DiffDisplay:         diffDisplay,
         PresentationStatus:  presentationStatus,
+        SupplyChainStatus:   types.LevelNotApplicable,
         PresentationDisplay: presentationDisplay,
         Status:              projectStatus,
     }
@@ -1147,6 +1230,7 @@ func buildFetchErrorAudit(projectConfig project.ProjectConfig, fetchErr error) t
         DiffStatus:          types.LevelSkipped,
         DiffDisplay:         string(types.LevelSkipped),
         PresentationStatus:  types.LevelSkipped,
+        SupplyChainStatus:   types.LevelSkipped,
         PresentationDisplay: string(types.LevelSkipped),
         Status:              types.StatusFailed,
         FetchError:          fetchErr.Error(),
@@ -1265,7 +1349,7 @@ func printTitleFixes(writer io.Writer, audits []types.ProjectAudit) {
             })
         }
 
-        if len(entries) > 0 {
+        if 0 < len(entries) {
             seen[repositoryKey] = true
             repos = append(repos, repoFixes{
                 key:   repositoryKey,
@@ -1375,7 +1459,7 @@ func applyChangelogDateAndLinkChecks(version, previousTagName, content, changelo
 }
 
 func shortSha(sha string) string {
-    if len(sha) >= 7 {
+    if 7 <= len(sha) {
         return sha[:7]
     }
     return sha

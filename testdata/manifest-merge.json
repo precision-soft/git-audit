@@ -1,0 +1,12 @@
+{
+    "mode": "merge",
+    "projects": [
+        {
+            "name": "Widget",
+            "githubUrl": "https://github.com/acme/widget",
+            "changelogPaths": [
+                "CHANGELOG.md"
+            ]
+        }
+    ]
+}
