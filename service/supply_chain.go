@@ -27,7 +27,7 @@ type gitTagObject struct {
 
 func (instance *GithubClient) GetTagVerification(organization, repository, tag string) (bool, string, error) {
     var reference gitReference
-    endpoint := fmt.Sprintf("%s/repos/%s/%s/git/ref/tags/%s", githubApiBase, organization, repository, tag)
+    endpoint := fmt.Sprintf("%s/repos/%s/%s/git/ref/tags/%s", instance.apiBase, organization, repository, escapePathSegments(tag))
     if getErr := instance.get(endpoint, &reference); nil != getErr {
         return false, "", getErr
     }
@@ -35,11 +35,20 @@ func (instance *GithubClient) GetTagVerification(organization, repository, tag s
         return false, "lightweight tag", nil
     }
     var tagObject gitTagObject
-    endpoint = fmt.Sprintf("%s/repos/%s/%s/git/tags/%s", githubApiBase, organization, repository, reference.Object.SHA)
+    endpoint = fmt.Sprintf("%s/repos/%s/%s/git/tags/%s", instance.apiBase, organization, repository, reference.Object.SHA)
     if getErr := instance.get(endpoint, &tagObject); nil != getErr {
         return false, "", getErr
     }
     return tagObject.Verification.Verified, tagObject.Verification.Reason, nil
+}
+
+/* a tag may carry "/" (go submodule tags do), so each segment is escaped and the separators are kept */
+func escapePathSegments(value string) string {
+    segments := strings.Split(value, "/")
+    for index, segment := range segments {
+        segments[index] = url.PathEscape(segment)
+    }
+    return strings.Join(segments, "/")
 }
 
 func (instance *GithubClient) HasArtifactAttestation(organization, repository, digest string) (bool, error) {
@@ -50,7 +59,7 @@ func (instance *GithubClient) HasArtifactAttestation(organization, repository, d
 
     endpoint := fmt.Sprintf(
         "%s/repos/%s/%s/attestations/%s",
-        githubApiBase,
+        instance.apiBase,
         organization,
         repository,
         url.PathEscape(digest),
@@ -70,7 +79,7 @@ func (instance *GithubClient) HasArtifactAttestation(organization, repository, d
         return false, nil
     }
     if 200 > response.StatusCode() || 300 <= response.StatusCode() {
-        return false, fmt.Errorf("http %d: %s", response.StatusCode(), string(response.Body()))
+        return false, newHttpStatusError(response)
     }
 
     var result struct {

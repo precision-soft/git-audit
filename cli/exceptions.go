@@ -163,6 +163,9 @@ func applyExceptions(audits []types.ProjectAudit, exceptions Exceptions) {
             for _, level := range levelNames {
                 result := releaseLevels(release)[level]
 
+                /* an exception accepts a warning, never a failure: filtering the issues of a failed
+                   level strips the only line explaining the failure and leaves the failure standing,
+                   so the audit reports red with nothing under it. */
                 if types.LevelWarning != result.Status {
                     continue
                 }
@@ -197,6 +200,10 @@ func applyExceptions(audits []types.ProjectAudit, exceptions Exceptions) {
 }
 
 func recomputeProjectAggregates(audit *types.ProjectAudit) {
+    if "" != audit.FetchError {
+        return
+    }
+
     statuses := make(map[string]types.LevelStatus, len(levelNames))
     warningCounts := make(map[string]int, len(levelNames))
 
@@ -205,6 +212,9 @@ func recomputeProjectAggregates(audit *types.ProjectAudit) {
     }
     if types.LevelNotApplicable == audit.DistributionStatus {
         statuses["distribution"] = types.LevelNotApplicable
+    }
+    if false == hasLevelResults(audit, "supply-chain") {
+        statuses["supply-chain"] = types.LevelNotApplicable
     }
 
     for releaseIndex := range audit.Releases {
@@ -248,6 +258,17 @@ func recomputeProjectAggregates(audit *types.ProjectAudit) {
     }
 }
 
+/* a level nobody ran leaves every release at n/a (or unset, for audits built before the level existed) */
+func hasLevelResults(audit *types.ProjectAudit, level string) bool {
+    for releaseIndex := range audit.Releases {
+        status := releaseLevels(&audit.Releases[releaseIndex])[level].Status
+        if "" != status && types.LevelNotApplicable != status {
+            return true
+        }
+    }
+    return false
+}
+
 func formatLevelDisplay(status types.LevelStatus, warningCount int) string {
     if types.LevelWarning == status && 0 < warningCount {
         return fmt.Sprintf("warning (%d)", warningCount)
@@ -280,6 +301,12 @@ func collectPendingWarnings(audits []types.ProjectAudit) []pendingWarning {
     return pending
 }
 
+/*
+reviewWarningsInteractively offers the unacknowledged warnings for acceptance and reports whether
+the exception set was modified. It is confined to the table format for the same reason
+renderAuditOutput is: a caller that asked for a machine-readable document gets one document, not a
+document followed by a plain-text question.
+*/
 func reviewWarningsInteractively(
     writer io.Writer,
     option output.Option,

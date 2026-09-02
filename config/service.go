@@ -16,7 +16,9 @@ func (instance *GithubAuditModule) RegisterServices(registrar applicationcontrac
         func(resolver containercontract.Resolver) (*service.GithubReleaseService, error) {
             configuration := melodyconfig.ConfigMustFromResolver(resolver)
             token := strings.TrimSpace(configuration.Get(ParameterGithubToken).String())
-            return service.NewGithubReleaseService(token), nil
+            apiBase := strings.TrimSpace(configuration.Get(ParameterGithubApiBase).String())
+            rawBase := strings.TrimSpace(configuration.Get(ParameterGithubRawBase).String())
+            return service.NewGithubReleaseService(token, apiBase, rawBase), nil
         },
     )
 }

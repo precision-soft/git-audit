@@ -1,6 +1,7 @@
 package cli
 
 import (
+    "bytes"
     "encoding/json"
     "fmt"
     "net/url"
@@ -26,7 +27,9 @@ func loadProjectManifest(manifestPath string, builtInProjects []project.ProjectC
         return nil, fmt.Errorf("read project configuration: %w", readErr)
     }
     var manifest projectManifest
-    if decodeErr := json.Unmarshal(manifestData, &manifest); nil != decodeErr {
+    decoder := json.NewDecoder(bytes.NewReader(manifestData))
+    decoder.DisallowUnknownFields()
+    if decodeErr := decoder.Decode(&manifest); nil != decodeErr {
         return nil, fmt.Errorf("decode project configuration: %w", decodeErr)
     }
     if "" == manifest.Mode {
@@ -80,6 +83,9 @@ func validateManifestProject(projectConfig project.ProjectConfig) error {
     parsed, parseErr := url.Parse(projectConfig.GithubUrl)
     if nil != parseErr || "https" != parsed.Scheme || "github.com" != strings.ToLower(parsed.Host) {
         return fmt.Errorf("project %q has an invalid github url", projectConfig.Name)
+    }
+    if organization, repository := parseGithubUrl(projectConfig.GithubUrl); "" == organization || "" == repository {
+        return fmt.Errorf("project %q has an invalid github url: an owner and a repository are required", projectConfig.Name)
     }
     for _, changelogPath := range projectConfig.ChangelogPaths {
         clean := filepath.Clean(changelogPath)

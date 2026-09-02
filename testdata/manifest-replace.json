@@ -1,0 +1,9 @@
+{
+    "mode": "replace",
+    "projects": [
+        {
+            "name": "Widget",
+            "githubUrl": "https://github.com/acme/widget"
+        }
+    ]
+}

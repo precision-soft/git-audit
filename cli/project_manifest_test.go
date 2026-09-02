@@ -7,7 +7,6 @@ import (
     "testing"
 
     "github.com/precision-soft/git-audit/config/project"
-    "github.com/precision-soft/git-audit/types"
 )
 
 func TestProjectManifestMergeOverridesByNameAndAddsProjects(t *testing.T) {
@@ -28,16 +27,6 @@ func TestProjectManifestRejectsUnsafeChangelogPath(t *testing.T) {
     }
 }
 
-func TestGithubAnnotationsEscapeCommands(t *testing.T) {
-    audits := auditWithLevelResult("integrity", types.LevelResult{Status: types.LevelFailed, Issues: []string{"bad: value\nnext"}})
-    var output strings.Builder
-    renderGithubAnnotations(&output, audits)
-    rendered := output.String()
-    if false == strings.Contains(rendered, "::error") || false == strings.Contains(rendered, "bad%3A value%0Anext") {
-        t.Fatalf("unexpected annotation: %s", rendered)
-    }
-}
-
 func writeManifest(t *testing.T, body string) string {
     t.Helper()
     path := filepath.Join(t.TempDir(), "projects.json")
@@ -45,4 +34,23 @@ func writeManifest(t *testing.T, body string) string {
         t.Fatal(writeErr)
     }
     return path
+}
+
+func TestProjectManifestRejectsUnknownFields(t *testing.T) {
+    _, loadErr := loadProjectManifest(writeManifest(t, `{"mode":"replace","projects":[{"name":"Typo","github_url":"https://github.com/acme/typo"}]}`), nil)
+    if nil == loadErr || false == strings.Contains(loadErr.Error(), "unknown field") {
+        t.Fatalf("a misspelled key must be rejected, not ignored, got %v", loadErr)
+    }
+}
+
+func TestValidateManifestProjectRequiresOwnerAndRepository(t *testing.T) {
+    for _, githubUrl := range []string{"https://github.com/", "https://github.com/owner", "https://github.com/owner/"} {
+        validateErr := validateManifestProject(project.ProjectConfig{Name: "Short", GithubUrl: githubUrl})
+        if nil == validateErr || false == strings.Contains(validateErr.Error(), "invalid github url") {
+            t.Errorf("%q must be rejected, got %v", githubUrl, validateErr)
+        }
+    }
+    if validateErr := validateManifestProject(project.ProjectConfig{Name: "Full", GithubUrl: "https://github.com/owner/repository"}); nil != validateErr {
+        t.Errorf("an owner/repository url must pass, got %v", validateErr)
+    }
 }

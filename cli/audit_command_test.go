@@ -3,13 +3,16 @@ package cli
 import (
     "bytes"
     "encoding/json"
+    "fmt"
     "strings"
     "testing"
     "time"
 
+    "github.com/precision-soft/git-audit/config/project"
     "github.com/precision-soft/git-audit/service"
     "github.com/precision-soft/git-audit/types"
 
+    clicontract "github.com/precision-soft/melody/v3/cli/contract"
     "github.com/precision-soft/melody/v3/cli/output"
 )
 
@@ -485,6 +488,9 @@ func renderAuditOutputForFormat(t *testing.T, format output.Format, audits []typ
         output.NewMeta("audit", nil, option, time.Now(), 0, output.Version{}),
     )
     envelope.Data = output.NewListPayload(audits, len(audits), option.Limit, option.Offset)
+    if output.FormatTable == format {
+        envelope.Table = buildAuditTable(audits, types.StatusOk, service.RateLimitInfo{})
+    }
 
     var buffer bytes.Buffer
     if renderErr := renderAuditOutput(&buffer, envelope, option, audits); nil != renderErr {
@@ -561,6 +567,84 @@ func TestNonStandardSectionsFlagsMisCasedAndDecoratedHeadings(t *testing.T) {
         found := nonStandardSections(section + "\n\n- Something\n")
         if 1 != len(found) || section != found[0] {
             t.Errorf("expected %q to be flagged, got %v", section, found)
+        }
+    }
+}
+
+func TestTableIssuesListSupplyChainIssues(t *testing.T) {
+    rendered := renderAuditOutputForFormat(t, output.FormatTable, auditWithLevelResult("supply-chain", types.LevelResult{
+        Status: types.LevelWarning,
+        Issues: []string{"release has no sbom artifact"},
+    }))
+
+    if false == strings.Contains(rendered, "release has no sbom artifact") {
+        t.Fatalf("expected the supply-chain issue in the table output, got:\n%s", rendered)
+    }
+}
+
+func TestSupplyChainStatusIsNotApplicableWhenNotRequested(t *testing.T) {
+    audit := buildProjectAudit("acme", "widget", "Widget", "", -1, 1, 1, 0, []types.ReleaseAudit{{TagName: "v1.0.0"}})
+
+    if types.LevelNotApplicable != audit.SupplyChainStatus {
+        t.Fatalf("a check that never ran is n/a, not %q", audit.SupplyChainStatus)
+    }
+    if types.LevelNotApplicable != audit.Releases[0].SupplyChain.Status {
+        t.Fatalf("the release level of a check that never ran is n/a, not %q", audit.Releases[0].SupplyChain.Status)
+    }
+
+    recomputeProjectAggregates(audit)
+
+    if types.LevelNotApplicable != audit.SupplyChainStatus {
+        t.Fatalf("re-aggregating must keep n/a like it keeps distribution's, got %q", audit.SupplyChainStatus)
+    }
+}
+
+func TestCacheIsOffByDefault(t *testing.T) {
+    for _, flag := range (&AuditCommand{}).Flags() {
+        stringFlag, isStringFlag := flag.(*clicontract.StringFlag)
+        if false == isStringFlag || flagCacheDir != stringFlag.Name {
+            continue
+        }
+        if "" != stringFlag.Value {
+            t.Fatalf("--cache-dir must be opt-in, got the default %q", stringFlag.Value)
+        }
+        return
+    }
+    t.Fatal("the --cache-dir flag is not declared")
+}
+
+func TestConcurrencyOutOfRangeIsRejected(t *testing.T) {
+    for _, value := range []int{0, -1, 33} {
+        if nil == validateConcurrency(value) {
+            t.Errorf("--concurrency=%d must be rejected", value)
+        }
+    }
+    for _, value := range []int{1, 4, 32} {
+        if validateErr := validateConcurrency(value); nil != validateErr {
+            t.Errorf("--concurrency=%d must be accepted, got %v", value, validateErr)
+        }
+    }
+}
+
+func TestAuditProjectsParallelAuditsEveryProject(t *testing.T) {
+    routes := make(map[string]string)
+    var projects []project.ProjectConfig
+    for index := 0; 40 > index; index++ {
+        repository := fmt.Sprintf("widget-%d", index)
+        routes["/repos/acme/"+repository+"/tags"] = `[]`
+        routes["/repos/acme/"+repository+"/releases"] = `[]`
+        projects = append(projects, project.ProjectConfig{Name: repository, GithubUrl: "https://github.com/acme/" + repository})
+    }
+    client, _ := fakeGithubApi(t, routes)
+
+    audits := auditProjectsParallel(client, projects, 32)
+
+    if len(projects) != len(audits) {
+        t.Fatalf("expected %d audits, got %d", len(projects), len(audits))
+    }
+    for index, audit := range audits {
+        if projects[index].Name != audit.RepositoryName || "" != audit.FetchError {
+            t.Errorf("slot %d must hold %s without a fetch error, got %s / %q", index, projects[index].Name, audit.RepositoryName, audit.FetchError)
         }
     }
 }

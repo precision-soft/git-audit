@@ -40,6 +40,10 @@ var (
     changelogCompareLink        = regexp.MustCompile(`(?m)^\[(v\d+\.\d+\.\d+)\]:\s*https?://\S+/compare/\S+`)
     shaHexRegex                 = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
 
+    /* the six Keep a Changelog sections first, then the shapes the projects also write. Every section a project
+       legitimately uses has to be listed: a missing one does not merely warn, it pressures the author into
+       renaming the section to one that is accepted, and a "## Security" in disguise as a second "## Fixed" is
+       worse than an unrecognised heading. */
     standardSections = map[string]bool{
         "## Added":            true,
         "## Changed":          true,
@@ -130,7 +134,7 @@ func (instance *AuditCommand) Flags() []clicontract.Flag {
             },
             &clicontract.IntFlag{
                 Name:  flagConcurrency,
-                Usage: "parallel project audits (1-32)",
+                Usage: fmt.Sprintf("parallel project audits (%d-%d)", minConcurrency, maxConcurrency),
                 Value: 4,
             },
             &clicontract.BoolFlag{
@@ -139,17 +143,17 @@ func (instance *AuditCommand) Flags() []clicontract.Flag {
                 Value: false,
             },
             &clicontract.StringFlag{
-                Name: flagCacheDir,
-                Usage: "directory for atomic GitHub ETag cache",
-                Value: ".dev-data/cache",
+                Name:  flagCacheDir,
+                Usage: "directory for an ETag response cache (off unless set)",
+                Value: "",
             },
             &clicontract.StringFlag{
-                Name: flagSupplyChain,
+                Name:  flagSupplyChain,
                 Usage: "opt-in checks: signed-tags,checksums,sbom,attestations,all",
                 Value: "",
             },
             &clicontract.BoolFlag{
-                Name: flagSupplyChainFail,
+                Name:  flagSupplyChainFail,
                 Usage: "make supply-chain findings failures instead of warnings",
                 Value: false,
             },
@@ -169,8 +173,8 @@ func (instance *AuditCommand) Run(
     exceptionsFile := strings.TrimSpace(commandContext.String(flagExceptions))
     projectConfigFile := strings.TrimSpace(commandContext.String(flagConfig))
     parallelism := commandContext.Int(flagConcurrency)
-    if 1 > parallelism || 32 < parallelism {
-        return fmt.Errorf("--concurrency must be between 1 and 32")
+    if validateErr := validateConcurrency(parallelism); nil != validateErr {
+        return validateErr
     }
 
     exceptions, loadErr := loadExceptions(exceptionsFile)
@@ -237,126 +241,7 @@ func (instance *AuditCommand) Run(
     envelope := output.NewEnvelope(meta)
 
     if option.Format == output.FormatTable {
-        builder := output.NewTableBuilder()
-        builder.AddSummaryLine(fmt.Sprintf("projects: %d | status: %s", len(audits), globalStatus))
-
-        if rateLimitLine := formatRateLimitLine(githubClient.RateLimit()); "" != rateLimitLine {
-            builder.AddSummaryLine(rateLimitLine)
-        }
-
-        summaryBlock := builder.AddBlock(
-            "SUMMARY",
-            []string{"repo", "tags", "submod", "releases", "packagist", "integrity", "distribution", "changelog", "diff", "presentation", "supply-chain", "status"},
-        )
-
-        for _, audit := range audits {
-            packagistColumn := "-"
-            if 0 <= audit.PackagistCount {
-                packagistColumn = fmt.Sprintf("%d", audit.PackagistCount)
-            } else if "" == audit.PackagistPackage {
-                packagistColumn = "n/a"
-            }
-
-            submoduleColumn := "-"
-            if 0 < audit.SubmoduleTagCount {
-                submoduleColumn = fmt.Sprintf("%d", audit.SubmoduleTagCount)
-            }
-
-            changelogStatus := "-"
-            if "" != audit.ChangelogDisplay {
-                changelogStatus = audit.ChangelogDisplay
-            }
-
-            diffStatus := "-"
-            if "" != audit.DiffDisplay {
-                diffStatus = audit.DiffDisplay
-            }
-
-            summaryBlock.AddRow(
-                audit.OrganizationName+"/"+audit.RepositoryName,
-                fmt.Sprintf("%d", audit.TagCount),
-                submoduleColumn,
-                fmt.Sprintf("%d", audit.ReleaseCount),
-                packagistColumn,
-                string(audit.IntegrityStatus),
-                string(audit.DistributionStatus),
-                changelogStatus,
-                diffStatus,
-                audit.PresentationDisplay,
-                string(audit.SupplyChainStatus),
-                string(audit.Status),
-            )
-        }
-
-        var fetchErrorAudits []types.ProjectAudit
-        for _, audit := range audits {
-            if "" != audit.FetchError {
-                fetchErrorAudits = append(fetchErrorAudits, audit)
-            }
-        }
-
-        if 0 < len(fetchErrorAudits) {
-            fetchBlock := builder.AddBlock("FETCH ERRORS", []string{"repo", "error"})
-            for _, audit := range fetchErrorAudits {
-                fetchBlock.AddRow(
-                    audit.OrganizationName+"/"+audit.RepositoryName,
-                    audit.FetchError,
-                )
-            }
-        }
-
-        type issueRow struct {
-            version  string
-            level    string
-            issue    string
-            priority int
-        }
-
-        repositoryIssueMap := make(map[string][]issueRow)
-        for _, audit := range audits {
-            repositoryKey := audit.OrganizationName + "/" + audit.RepositoryName
-            for _, release := range audit.Releases {
-                for _, issue := range release.Integrity.Issues {
-                    repositoryIssueMap[repositoryKey] = append(repositoryIssueMap[repositoryKey], issueRow{release.TagName, "integrity", issue, 0})
-                }
-                for _, issue := range release.Distribution.Issues {
-                    repositoryIssueMap[repositoryKey] = append(repositoryIssueMap[repositoryKey], issueRow{release.TagName, "distribution", issue, 1})
-                }
-                for _, issue := range release.Changelog.Issues {
-                    repositoryIssueMap[repositoryKey] = append(repositoryIssueMap[repositoryKey], issueRow{release.TagName, "changelog", issue, 2})
-                }
-                for _, issue := range release.Diff.Issues {
-                    repositoryIssueMap[repositoryKey] = append(repositoryIssueMap[repositoryKey], issueRow{release.TagName, "diff", issue, 3})
-                }
-                for _, issue := range release.Presentation.Issues {
-                    repositoryIssueMap[repositoryKey] = append(repositoryIssueMap[repositoryKey], issueRow{release.TagName, "presentation", issue, 4})
-                }
-            }
-        }
-
-        seen := make(map[string]bool)
-        for _, audit := range audits {
-            repositoryKey := audit.OrganizationName + "/" + audit.RepositoryName
-            rows, hasIssues := repositoryIssueMap[repositoryKey]
-            if false == hasIssues || true == seen[repositoryKey] {
-                continue
-            }
-            seen[repositoryKey] = true
-
-            sort.SliceStable(rows, func(leftIndex, rightIndex int) bool {
-                if rows[leftIndex].priority != rows[rightIndex].priority {
-                    return rows[leftIndex].priority < rows[rightIndex].priority
-                }
-                return rows[leftIndex].version < rows[rightIndex].version
-            })
-
-            block := builder.AddBlock(repositoryKey, []string{"version", "level", "issue"})
-            for _, row := range rows {
-                block.AddRow(row.version, row.level, row.issue)
-            }
-        }
-
-        envelope.Table = builder.Build()
+        envelope.Table = buildAuditTable(audits, globalStatus, githubClient.RateLimit())
     } else {
         envelope.Data = output.NewListPayload(audits, len(audits), option.Limit, option.Offset)
     }
@@ -389,11 +274,153 @@ func (instance *AuditCommand) Run(
     return nil
 }
 
+func buildAuditTable(audits []types.ProjectAudit, globalStatus types.Status, rateLimit service.RateLimitInfo) *output.TableData {
+    builder := output.NewTableBuilder()
+    builder.AddSummaryLine(fmt.Sprintf("projects: %d | status: %s", len(audits), globalStatus))
+
+    if rateLimitLine := formatRateLimitLine(rateLimit); "" != rateLimitLine {
+        builder.AddSummaryLine(rateLimitLine)
+    }
+
+    summaryBlock := builder.AddBlock(
+        "SUMMARY",
+        []string{"repo", "tags", "submod", "releases", "packagist", "integrity", "distribution", "changelog", "diff", "presentation", "supply-chain", "status"},
+    )
+
+    for _, audit := range audits {
+        packagistColumn := "-"
+        if 0 <= audit.PackagistCount {
+            packagistColumn = fmt.Sprintf("%d", audit.PackagistCount)
+        } else if "" == audit.PackagistPackage {
+            packagistColumn = "n/a"
+        }
+
+        submoduleColumn := "-"
+        if 0 < audit.SubmoduleTagCount {
+            submoduleColumn = fmt.Sprintf("%d", audit.SubmoduleTagCount)
+        }
+
+        changelogStatus := "-"
+        if "" != audit.ChangelogDisplay {
+            changelogStatus = audit.ChangelogDisplay
+        }
+
+        diffStatus := "-"
+        if "" != audit.DiffDisplay {
+            diffStatus = audit.DiffDisplay
+        }
+
+        summaryBlock.AddRow(
+            audit.OrganizationName+"/"+audit.RepositoryName,
+            fmt.Sprintf("%d", audit.TagCount),
+            submoduleColumn,
+            fmt.Sprintf("%d", audit.ReleaseCount),
+            packagistColumn,
+            string(audit.IntegrityStatus),
+            string(audit.DistributionStatus),
+            changelogStatus,
+            diffStatus,
+            audit.PresentationDisplay,
+            string(audit.SupplyChainStatus),
+            string(audit.Status),
+        )
+    }
+
+    var fetchErrorAudits []types.ProjectAudit
+    for _, audit := range audits {
+        if "" != audit.FetchError {
+            fetchErrorAudits = append(fetchErrorAudits, audit)
+        }
+    }
+
+    if 0 < len(fetchErrorAudits) {
+        fetchBlock := builder.AddBlock("FETCH ERRORS", []string{"repo", "error"})
+        for _, audit := range fetchErrorAudits {
+            fetchBlock.AddRow(
+                audit.OrganizationName+"/"+audit.RepositoryName,
+                audit.FetchError,
+            )
+        }
+    }
+
+    type issueRow struct {
+        version  string
+        level    string
+        issue    string
+        priority int
+    }
+
+    repositoryIssueMap := make(map[string][]issueRow)
+    for _, audit := range audits {
+        repositoryKey := audit.OrganizationName + "/" + audit.RepositoryName
+        for _, release := range audit.Releases {
+            for _, issue := range release.Integrity.Issues {
+                repositoryIssueMap[repositoryKey] = append(repositoryIssueMap[repositoryKey], issueRow{release.TagName, "integrity", issue, 0})
+            }
+            for _, issue := range release.Distribution.Issues {
+                repositoryIssueMap[repositoryKey] = append(repositoryIssueMap[repositoryKey], issueRow{release.TagName, "distribution", issue, 1})
+            }
+            for _, issue := range release.Changelog.Issues {
+                repositoryIssueMap[repositoryKey] = append(repositoryIssueMap[repositoryKey], issueRow{release.TagName, "changelog", issue, 2})
+            }
+            for _, issue := range release.Diff.Issues {
+                repositoryIssueMap[repositoryKey] = append(repositoryIssueMap[repositoryKey], issueRow{release.TagName, "diff", issue, 3})
+            }
+            for _, issue := range release.Presentation.Issues {
+                repositoryIssueMap[repositoryKey] = append(repositoryIssueMap[repositoryKey], issueRow{release.TagName, "presentation", issue, 4})
+            }
+            for _, issue := range release.SupplyChain.Issues {
+                repositoryIssueMap[repositoryKey] = append(repositoryIssueMap[repositoryKey], issueRow{release.TagName, "supply-chain", issue, 5})
+            }
+        }
+    }
+
+    seen := make(map[string]bool)
+    for _, audit := range audits {
+        repositoryKey := audit.OrganizationName + "/" + audit.RepositoryName
+        rows, hasIssues := repositoryIssueMap[repositoryKey]
+        if false == hasIssues || true == seen[repositoryKey] {
+            continue
+        }
+        seen[repositoryKey] = true
+
+        sort.SliceStable(rows, func(leftIndex, rightIndex int) bool {
+            if rows[leftIndex].priority != rows[rightIndex].priority {
+                return rows[leftIndex].priority < rows[rightIndex].priority
+            }
+            return rows[leftIndex].version < rows[rightIndex].version
+        })
+
+        block := builder.AddBlock(repositoryKey, []string{"version", "level", "issue"})
+        for _, row := range rows {
+            block.AddRow(row.version, row.level, row.issue)
+        }
+    }
+
+    return builder.Build()
+}
+
+const (
+    minConcurrency = 1
+    maxConcurrency = 32
+)
+
+func validateConcurrency(parallelism int) error {
+    if minConcurrency > parallelism || maxConcurrency < parallelism {
+        return fmt.Errorf("--concurrency must be between %d and %d", minConcurrency, maxConcurrency)
+    }
+
+    return nil
+}
+
 func auditProjectsParallel(client *service.GithubClient, projects []project.ProjectConfig, parallelism int) []types.ProjectAudit {
     audits := make([]types.ProjectAudit, len(projects))
 
-    if 1 > parallelism {
-        parallelism = 1
+    if minConcurrency > parallelism {
+        parallelism = minConcurrency
+    }
+    if maxConcurrency < parallelism {
+        parallelism = maxConcurrency
     }
     semaphore := make(chan struct{}, parallelism)
     var waitGroup sync.WaitGroup
@@ -539,6 +566,11 @@ func auditProject(client *service.GithubClient, projectConfig project.ProjectCon
     ), nil
 }
 
+/*
+sortReleaseAudits orders the audited releases the way every other tag comparison in the tool does.
+A lexical order reads plausibly until a version reaches double digits, and then puts v4.1.12 above
+v4.1.9 in every table.
+*/
 func sortReleaseAudits(releaseAudits []types.ReleaseAudit) {
     sort.SliceStable(releaseAudits, func(leftIndex, rightIndex int) bool {
         return compareSemver(releaseAudits[leftIndex].TagName, releaseAudits[rightIndex].TagName) < 0
@@ -1023,6 +1055,7 @@ func computeReleaseStatus(releaseAudit types.ReleaseAudit) types.Status {
         releaseAudit.Changelog.Status,
         releaseAudit.Diff.Status,
         releaseAudit.Presentation.Status,
+        releaseAudit.SupplyChain.Status,
     }
 
     for _, level := range levels {
@@ -1063,6 +1096,12 @@ func buildProjectAudit(
 
     if "" == packagistPackage {
         distributionStatus = types.LevelNotApplicable
+    }
+
+    for index := range releaseAudits {
+        if "" == releaseAudits[index].SupplyChain.Status {
+            releaseAudits[index].SupplyChain.Status = types.LevelNotApplicable
+        }
     }
 
     for _, releaseAudit := range releaseAudits {
@@ -1159,6 +1198,7 @@ func buildProjectAudit(
         DiffStatus:          diffStatus,
         DiffDisplay:         diffDisplay,
         PresentationStatus:  presentationStatus,
+        SupplyChainStatus:   types.LevelNotApplicable,
         PresentationDisplay: presentationDisplay,
         Status:              projectStatus,
     }
@@ -1190,6 +1230,7 @@ func buildFetchErrorAudit(projectConfig project.ProjectConfig, fetchErr error) t
         DiffStatus:          types.LevelSkipped,
         DiffDisplay:         string(types.LevelSkipped),
         PresentationStatus:  types.LevelSkipped,
+        SupplyChainStatus:   types.LevelSkipped,
         PresentationDisplay: string(types.LevelSkipped),
         Status:              types.StatusFailed,
         FetchError:          fetchErr.Error(),
@@ -1226,6 +1267,11 @@ func fetchPackagistVersions(packagistPackage string) PackagistAuditInfo {
     }
 }
 
+/*
+renderAuditOutput writes the envelope and, for the table format only, the follow-up title-fix
+block. A machine-readable format carries exactly one document per invocation, so anything appended
+after it leaves the caller with a stream no parser accepts.
+*/
 func renderAuditOutput(
     writer io.Writer,
     envelope output.Envelope,

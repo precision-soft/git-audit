@@ -14,22 +14,20 @@ type cachedResponse struct {
     Body      json.RawMessage `json:"body"`
 }
 
-func readCachedResponse(directory, urlString string) (*cachedResponse, error) {
+/* every failure is a miss: the cache only ever saves a request, it never gets to fail one */
+func readCachedResponse(directory, urlString string) *cachedResponse {
     if "" == directory {
-        return nil, nil
+        return nil
     }
     cachedData, readErr := os.ReadFile(cachePath(directory, urlString))
-    if true == os.IsNotExist(readErr) {
-        return nil, nil
-    }
     if nil != readErr {
-        return nil, readErr
+        return nil
     }
     var cached cachedResponse
     if decodeErr := json.Unmarshal(cachedData, &cached); nil != decodeErr {
-        return nil, decodeErr
+        return nil
     }
-    return &cached, nil
+    return &cached
 }
 
 func writeCachedResponse(directory, urlString, entityTag string, body []byte) error {

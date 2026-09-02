@@ -9,6 +9,12 @@ import (
 
 const flagRepoUrl = "repo-url"
 
+/*
+resolveTargetProjects applies the --repo / --repo-url flag pair against the built-in project list.
+--repo takes a comma-separated list of repo names and --repo-url only applies to a single one of
+them: a name that is not in the list is audited ad hoc from that URL, and a name that is in it
+cannot have its URL overridden.
+*/
 func resolveTargetProjects(repositoryFilter, repositoryUrl string) ([]project.ProjectConfig, error) {
     return resolveTargetProjectsFrom(project.Projects, repositoryFilter, repositoryUrl)
 }
@@ -44,7 +50,6 @@ func resolveTargetProjectsFrom(available []project.ProjectConfig, repositoryFilt
     }
     return resolved, nil
 }
-
 
 func resolveSingleRepoFilterFrom(available []project.ProjectConfig, repositoryFilter, repositoryUrl string) ([]project.ProjectConfig, error) {
     filtered := filterProjects(available, repositoryFilter)

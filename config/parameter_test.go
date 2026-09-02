@@ -34,8 +34,8 @@ func TestRegisterParametersDeclaresTheTokenAsACredential(t *testing.T) {
 
     (&GithubAuditModule{}).RegisterParameters(registrar)
 
-    if 0 != len(registrar.plain) {
-        t.Fatalf("no parameter may be registered in clear text, got %v", registrar.plain)
+    if 2 != len(registrar.plain) {
+        t.Fatalf("only the two base urls may be registered in clear text, got %v", registrar.plain)
     }
 
     expectedValue := "%env(" + EnvironmentGithubToken + ")%"
@@ -58,5 +58,28 @@ func TestRegisterParametersMarksTheEnvironmentVariableSecret(t *testing.T) {
 
     if 1 != len(registrar.marked) || EnvironmentGithubToken != registrar.marked[0] {
         t.Fatalf("`%s` must be marked secret, got %v", EnvironmentGithubToken, registrar.marked)
+    }
+}
+
+func TestRegisterParametersDeclaresTheBaseUrlsAsOptional(t *testing.T) {
+    registrar := newRecordingParameterRegistrar()
+
+    (&GithubAuditModule{}).RegisterParameters(registrar)
+
+    expected := map[string]string{
+        ParameterGithubApiBase: "%env(default::" + EnvironmentGithubApiBase + ")%",
+        ParameterGithubRawBase: "%env(default::" + EnvironmentGithubRawBase + ")%",
+    }
+    for name, expectedValue := range expected {
+        value, registered := registrar.plain[name]
+        if false == registered {
+            t.Fatalf("`%s` must be registered as a plain parameter", name)
+        }
+        if value != expectedValue {
+            t.Fatalf("`%s` must resolve to `%s`, got `%v`", name, expectedValue, value)
+        }
+        if _, secret := registrar.secret[name]; true == secret {
+            t.Fatalf("`%s` is a host, not a credential", name)
+        }
     }
 }

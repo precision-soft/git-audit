@@ -105,11 +105,11 @@ func resolveGithubClient(
     runtimeInstance runtimecontract.Runtime,
     commandContext *clicontract.CommandContext,
 ) (*service.GithubClient, error) {
+    releaseService := service.GithubReleaseServiceMustFromRuntime(runtimeInstance)
     cliToken := strings.TrimSpace(commandContext.String(flagToken))
     if "" != cliToken {
-        return service.NewGithubClient(cliToken), nil
+        return releaseService.NewClientWithToken(cliToken), nil
     }
-    releaseService := service.GithubReleaseServiceMustFromRuntime(runtimeInstance)
     if "" == releaseService.Token() {
         return nil, fmt.Errorf("github token required (--token or GITHUB_TOKEN env)")
     }
