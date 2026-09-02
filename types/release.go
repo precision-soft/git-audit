@@ -1,8 +1,8 @@
 package types
 
 type LevelResult struct {
-    Status LevelStatus
-    Issues []string
+    Status LevelStatus `json:"status"`
+    Issues []string    `json:"issues"`
 }
 
 type ReleaseAudit struct {

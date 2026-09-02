@@ -1,7 +1,7 @@
 # Git Audit
 
 [![ci](https://github.com/precision-soft/git-audit/actions/workflows/ci.yml/badge.svg)](https://github.com/precision-soft/git-audit/actions/workflows/ci.yml)
-[![Go >= 1.25](https://img.shields.io/badge/go-%3E%3D1.25-00ADD8)](https://go.dev/)
+[![Go >= 1.26](https://img.shields.io/badge/go-%3E%3D1.26-00ADD8)](https://go.dev/)
 [![License MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 Go CLI that **audits GitHub releases** and **syncs release bodies from each repo's `CHANGELOG.md`** (changelog is the source of truth). For every tag it produces per-level status (integrity, distribution, changelog, diff, presentation), supports accepted exceptions with expiry, and manages local clones automatically.
@@ -324,7 +324,7 @@ Omitting `--repo` entirely is equivalent — it targets every project in `config
 
 ## External project manifests and CI output
 
-`audit --config projects.json` loads `{ "mode": "merge|replace", "projects": [...] }` — the same fields as `config/project/project.go` (`name`, `githubUrl`, `packagistUrl`, `goSubmodule`, `changelogPaths`). `merge` keeps the built-ins and overrides them by name; `replace` audits only the manifest. A misspelled key, a URL without an owner and a repository, a duplicate URL or a changelog path that escapes the repository is refused before anything is fetched.
+`audit --config projects.json` loads `{ "mode": "merge|replace", "projects": [...] }` — the same fields as `config/project/project.go` (`name`, `githubUrl`, `packagistUrl`, `goSubmodule`, `changelogPaths`). `merge` keeps the built-ins and overrides them by name; `replace` audits only the manifest. A misspelled key, a URL without an owner and a repository, a duplicate URL or a changelog path that escapes the repository is refused before anything is fetched. `--repo-url` is deliberately not validated the same way: `sync` clones from any git URL, `file://` included.
 
 `--github-annotations` writes one workflow command per issue to stderr (`::warning title=<org>/<repo> <tag> <level>::<issue>`, `::error` for a failed level), in a fixed level order, with only the title escaped as a property; stdout stays the document, so `--format json` is still parseable in the same step. melody's boot log also lands on stderr as json lines, which the runner ignores.
 

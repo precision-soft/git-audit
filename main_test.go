@@ -365,9 +365,9 @@ type auditDocument struct {
                 TagName     string `json:"tagName"`
                 Status      string `json:"status"`
                 SupplyChain struct {
-                    Status string
-                    Issues []string
-                }
+                    Status string   `json:"status"`
+                    Issues []string `json:"issues"`
+                } `json:"supplyChain"`
             } `json:"releases"`
         } `json:"items"`
     } `json:"data"`

@@ -18,8 +18,9 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **`types.LevelResult` is serialised as `status` / `issues`** — the struct carried no json tags, so every per-release level (`integrity`, `distribution`, `changelog`, `diff`, `presentation`, `supplyChain`) rendered its two fields capitalised inside otherwise lowerCamel documents. A consumer that reads `Status` or `Issues` from the `audit --format json` output has to switch to the lowercase keys
 - `service.GithubClient` — the API and raw hosts are fields (`SetEndpoints()`), fed by two new optional parameters `github.api_base` / `github.raw_base` (`GITHUB_API_BASE` / `GITHUB_RAW_BASE` in the `.env` files); unset, the public hosts are used. `GithubReleaseService` hands them to every client it builds, the `--token` client included. Non-2xx answers are a typed `HttpStatusError`, so a caller can tell a 404 from a transport failure
-- `.dev/docker/Dockerfile` — `golang:1.25-alpine` (a branch at its end of life) → `golang:1.26-alpine`, staticcheck `v0.7.0` → `v0.8.1`, and `gcc` + `musl-dev` so `go test -race` can build; `go.mod` keeps `go 1.25.0` as the floor. `.github/workflows/ci.yml` follows with `go-version: 1.26.x` and a `test ( race )` step; `all.sh --e2e` runs the race detector over `cli/` and `service/`
+- `.dev/docker/Dockerfile` — `golang:1.25-alpine` (a branch at its end of life) → `golang:1.26-alpine`, staticcheck `v0.7.0` → `v0.8.1`, and `gcc` + `musl-dev` so `go test -race` can build; `go.mod` moves to `go 1.26.0` and the README badge and `CONTRIBUTING.md` follow. `.github/workflows/ci.yml` follows with `go-version: 1.26.x` and a `test ( race )` step; `all.sh --e2e` runs the race detector over `cli/` and `service/`
 - `cli/audit_command.go`, `cli/exceptions.go`, `cli/project_resolver.go`, `service/github.go` — the seven explanatory comments the feature commit had deleted are back; each records a decision a reader would otherwise "fix" (the section whitelist, the semver ordering, one document per invocation, warnings-only exceptions, peak rate-limit usage)
 
 ### Added

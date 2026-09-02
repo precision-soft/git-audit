@@ -6,7 +6,7 @@ This document describes local development, testing, and contribution rules for G
 
 Prerequisites:
 
-- Go 1.25+
+- Go 1.26+
 - Docker (the repository ships a containerized development shell under [`.dev/`](./.dev/))
 
 ```bash
