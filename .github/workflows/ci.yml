@@ -23,12 +23,13 @@ jobs:
     # rewrite it wholesale. staticcheck does not check formatting, which is why it is safe to run.
     go:
         runs-on: ubuntu-latest
+        timeout-minutes: 20
         steps:
-            -   uses: actions/checkout@v4
+            -   uses: actions/checkout@v7
             # check-latest is the same decision the Dockerfile makes by leaving the base image on a
             # floating patch tag: every vulnerability reported here lived in the standard library, so
             # pinning the patch would freeze the vulnerability rather than the findings.
-            -   uses: actions/setup-go@v5
+            -   uses: actions/setup-go@v7
                 with:
                     go-version-file: go.mod
                     check-latest: true
@@ -80,9 +81,10 @@ jobs:
     # `go test` replays everything in cli/testdata/. This job looks for new ones.
     fuzz:
         runs-on: ubuntu-latest
+        timeout-minutes: 20
         steps:
-            -   uses: actions/checkout@v4
-            -   uses: actions/setup-go@v5
+            -   uses: actions/checkout@v7
+            -   uses: actions/setup-go@v7
                 with:
                     go-version-file: go.mod
                     check-latest: true
