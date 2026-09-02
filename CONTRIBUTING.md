@@ -62,6 +62,12 @@ This tool is **not released**. It carries no tags and no GitHub releases; the da
 
 ## Code style
 
+- Indent Go code with four spaces. Do not run `gofmt` or `go fmt`; both replace the repository's indentation and create unrelated churn.
+- Use singular package, file, and type names, descriptive camel-case identifiers, and camel-case acronyms such as `urlString`, `httpClient`, and `userId`.
+- Name every method receiver `instance`.
+- Put constants on the left of comparisons, including ordered comparisons, and express boolean conditions explicitly without `!`.
+- Use single-star `/* ... */` comments. Line comments are reserved for build, embed, generated-code, and linter directives that require them.
+- Keep exported fields before unexported fields and prefer one major type per file.
 - No raw `panic` — use typed or sentinel errors, and wrap with `%w` where the caller may want to unwrap.
 - Plain `err` is fine when it is the only error in scope; with several in one scope, name them (`validationErr`, `dispatchErr`).
 - Constructors go immediately before the type they construct.

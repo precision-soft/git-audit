@@ -33,9 +33,9 @@ func TestCompareSemver(t *testing.T) {
     for _, testCase := range cases {
         got := compareSemver(testCase.left, testCase.right)
         gotSign := 0
-        if got < 0 {
+        if 0 > got {
             gotSign = -1
-        } else if got > 0 {
+        } else if 0 < got {
             gotSign = 1
         }
         if gotSign != testCase.want {

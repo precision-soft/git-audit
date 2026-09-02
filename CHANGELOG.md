@@ -106,3 +106,6 @@ All notable changes to this project will be documented in this file.
 - `--repo-url URL` flag on both `audit` and `sync` — opt-in support for repositories not in the built-in project list
 - Centralized HTTP behavior in `service/http_retry.go`: 30s timeout, 3 attempts with exponential backoff on 5xx/429, rate-limit tracking (peak-usage `Remaining`)
 - Default project list in `config/project/project.go` for `precision-soft/*` open-source repositories
+
+- Add validated merge/replace JSON project manifests and GitHub workflow annotations.
+- Add bounded concurrency, atomic ETag caching, and opt-in supply-chain release checks.

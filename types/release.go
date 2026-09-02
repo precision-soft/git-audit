@@ -17,6 +17,7 @@ type ReleaseAudit struct {
     Changelog    LevelResult `json:"changelog"`
     Diff         LevelResult `json:"diff"`
     Presentation LevelResult `json:"presentation"`
+    SupplyChain  LevelResult `json:"supplyChain"`
     Status       Status      `json:"status"`
 }
 
@@ -37,6 +38,7 @@ type ProjectAudit struct {
     DiffStatus          LevelStatus    `json:"diffStatus"`
     DiffDisplay         string         `json:"diffDisplay"`
     PresentationStatus  LevelStatus    `json:"presentationStatus"`
+    SupplyChainStatus   LevelStatus    `json:"supplyChainStatus"`
     PresentationDisplay string         `json:"presentationDisplay"`
     Status              Status         `json:"status"`
     FetchError          string         `json:"fetchError,omitempty"`

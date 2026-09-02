@@ -315,7 +315,7 @@ func (instance *SyncCommand) Run(
         printSyncDiffs(commandContext.Writer, diffs)
     }
 
-    if counts["error"] > 0 {
+    if 0 < counts["error"] {
         return fmt.Errorf("sync completed with %d errors", counts["error"])
     }
     return nil
@@ -385,7 +385,7 @@ func unifiedDiff(current, desired string) string {
 
     var lines []string
     row, column := rows, columns
-    for row > 0 || column > 0 {
+    for 0 < row || 0 < column {
         switch {
         case row > 0 && column > 0 && currentLines[row-1] == desiredLines[column-1]:
             lines = append(lines, "  "+currentLines[row-1])
@@ -440,7 +440,7 @@ func listChangelogVersions(content string) []string {
     seen := make(map[string]bool, len(matches))
     versions := make([]string, 0, len(matches))
     for _, match := range matches {
-        if len(match) < 2 {
+        if 2 > len(match) {
             continue
         }
         if true == seen[match[1]] {
@@ -509,7 +509,7 @@ func canonicalReleaseBody(body string) string {
     var cleaned []string
     for _, line := range lines {
         trimmed := strings.TrimRight(line, lineTrailingWhitespace)
-        if "" == trimmed && len(cleaned) > 0 && "" == cleaned[len(cleaned)-1] {
+        if "" == trimmed && 0 < len(cleaned) && "" == cleaned[len(cleaned)-1] {
             continue
         }
         cleaned = append(cleaned, trimmed)

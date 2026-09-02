@@ -296,10 +296,10 @@ func FuzzCompareSemver(f *testing.F) {
 }
 
 func compareSign(value int) int {
-    if value < 0 {
+    if 0 > value {
         return -1
     }
-    if value > 0 {
+    if 0 < value {
         return 1
     }
 
@@ -315,7 +315,7 @@ func FuzzSemverParts(f *testing.F) {
     f.Fuzz(func(t *testing.T, tag string) {
         parts := semverParts(tag)
         for index, part := range parts {
-            if part < 0 {
+            if 0 > part {
                 t.Fatalf("semverParts(%q)[%d] = %d, want a non-negative segment", tag, index, part)
             }
         }

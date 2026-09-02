@@ -20,12 +20,16 @@ import (
 )
 
 const (
-    flagToken         = "token"
-    flagRepo          = "repo"
-    flagFailOnWarning = "fail-on-warning"
-    flagExceptions    = "exceptions"
-
-    auditParallelism = 4
+    flagToken             = "token"
+    flagRepo              = "repo"
+    flagFailOnWarning     = "fail-on-warning"
+    flagExceptions        = "exceptions"
+    flagConfig            = "config"
+    flagConcurrency       = "concurrency"
+    flagGithubAnnotations = "github-annotations"
+    flagCacheDir          = "cache-dir"
+    flagSupplyChain       = "supply-chain"
+    flagSupplyChainFail   = "supply-chain-fail"
 )
 
 var (
@@ -36,10 +40,6 @@ var (
     changelogCompareLink        = regexp.MustCompile(`(?m)^\[(v\d+\.\d+\.\d+)\]:\s*https?://\S+/compare/\S+`)
     shaHexRegex                 = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
 
-    /* the six Keep a Changelog sections first, then the shapes the projects also write. Every section a project
-       legitimately uses has to be listed: a missing one does not merely warn, it pressures the author into
-       renaming the section to one that is accepted, and a "## Security" in disguise as a second "## Fixed" is
-       worse than an unrecognised heading. */
     standardSections = map[string]bool{
         "## Added":            true,
         "## Changed":          true,
@@ -123,6 +123,36 @@ func (instance *AuditCommand) Flags() []clicontract.Flag {
                 Usage: "path to exceptions JSON file",
                 Value: "exceptions.json",
             },
+            &clicontract.StringFlag{
+                Name:  flagConfig,
+                Usage: "path to a JSON project manifest (mode: merge or replace)",
+                Value: "",
+            },
+            &clicontract.IntFlag{
+                Name:  flagConcurrency,
+                Usage: "parallel project audits (1-32)",
+                Value: 4,
+            },
+            &clicontract.BoolFlag{
+                Name:  flagGithubAnnotations,
+                Usage: "emit GitHub workflow annotations on stderr",
+                Value: false,
+            },
+            &clicontract.StringFlag{
+                Name: flagCacheDir,
+                Usage: "directory for atomic GitHub ETag cache",
+                Value: ".dev-data/cache",
+            },
+            &clicontract.StringFlag{
+                Name: flagSupplyChain,
+                Usage: "opt-in checks: signed-tags,checksums,sbom,attestations,all",
+                Value: "",
+            },
+            &clicontract.BoolFlag{
+                Name: flagSupplyChainFail,
+                Usage: "make supply-chain findings failures instead of warnings",
+                Value: false,
+            },
         },
     )
 }
@@ -137,6 +167,11 @@ func (instance *AuditCommand) Run(
     repositoryUrl := strings.TrimSpace(commandContext.String(flagRepoUrl))
     failOnWarning := commandContext.Bool(flagFailOnWarning)
     exceptionsFile := strings.TrimSpace(commandContext.String(flagExceptions))
+    projectConfigFile := strings.TrimSpace(commandContext.String(flagConfig))
+    parallelism := commandContext.Int(flagConcurrency)
+    if 1 > parallelism || 32 < parallelism {
+        return fmt.Errorf("--concurrency must be between 1 and 32")
+    }
 
     exceptions, loadErr := loadExceptions(exceptionsFile)
     if nil != loadErr {
@@ -147,7 +182,12 @@ func (instance *AuditCommand) Run(
     if nil != resolveErr {
         return resolveErr
     }
-    projects, resolveErr := resolveTargetProjects(repositoryFilter, repositoryUrl)
+    githubClient.SetCacheDir(strings.TrimSpace(commandContext.String(flagCacheDir)))
+    availableProjects, resolveErr := loadProjectManifest(projectConfigFile, project.Projects)
+    if nil != resolveErr {
+        return resolveErr
+    }
+    projects, resolveErr := resolveTargetProjectsFrom(availableProjects, repositoryFilter, repositoryUrl)
     if nil != resolveErr {
         return resolveErr
     }
@@ -156,9 +196,16 @@ func (instance *AuditCommand) Run(
         option.TableMaxWidth = autoTableMaxWidth()
     }
 
-    audits := auditProjectsParallel(githubClient, projects, auditParallelism)
+    audits := auditProjectsParallel(githubClient, projects, parallelism)
+    if supplyErr := applySupplyChainAudits(githubClient, audits, commandContext.String(flagSupplyChain), commandContext.Bool(flagSupplyChainFail)); nil != supplyErr {
+        return supplyErr
+    }
 
     applyExceptions(audits, exceptions)
+
+    if true == commandContext.Bool(flagGithubAnnotations) {
+        renderGithubAnnotations(commandContext.ErrWriter, audits)
+    }
 
     hasFailure := false
     hasWarning := false
@@ -199,19 +246,19 @@ func (instance *AuditCommand) Run(
 
         summaryBlock := builder.AddBlock(
             "SUMMARY",
-            []string{"repo", "tags", "submod", "releases", "packagist", "integrity", "distribution", "changelog", "diff", "presentation", "status"},
+            []string{"repo", "tags", "submod", "releases", "packagist", "integrity", "distribution", "changelog", "diff", "presentation", "supply-chain", "status"},
         )
 
         for _, audit := range audits {
             packagistColumn := "-"
-            if audit.PackagistCount >= 0 {
+            if 0 <= audit.PackagistCount {
                 packagistColumn = fmt.Sprintf("%d", audit.PackagistCount)
             } else if "" == audit.PackagistPackage {
                 packagistColumn = "n/a"
             }
 
             submoduleColumn := "-"
-            if audit.SubmoduleTagCount > 0 {
+            if 0 < audit.SubmoduleTagCount {
                 submoduleColumn = fmt.Sprintf("%d", audit.SubmoduleTagCount)
             }
 
@@ -236,6 +283,7 @@ func (instance *AuditCommand) Run(
                 changelogStatus,
                 diffStatus,
                 audit.PresentationDisplay,
+                string(audit.SupplyChainStatus),
                 string(audit.Status),
             )
         }
@@ -247,7 +295,7 @@ func (instance *AuditCommand) Run(
             }
         }
 
-        if len(fetchErrorAudits) > 0 {
+        if 0 < len(fetchErrorAudits) {
             fetchBlock := builder.AddBlock("FETCH ERRORS", []string{"repo", "error"})
             for _, audit := range fetchErrorAudits {
                 fetchBlock.AddRow(
@@ -344,7 +392,7 @@ func (instance *AuditCommand) Run(
 func auditProjectsParallel(client *service.GithubClient, projects []project.ProjectConfig, parallelism int) []types.ProjectAudit {
     audits := make([]types.ProjectAudit, len(projects))
 
-    if parallelism < 1 {
+    if 1 > parallelism {
         parallelism = 1
     }
     semaphore := make(chan struct{}, parallelism)
@@ -438,7 +486,7 @@ func auditProject(client *service.GithubClient, projectConfig project.ProjectCon
 
     for index, tag := range regularTags {
         previousTagName := ""
-        if index > 0 {
+        if 0 < index {
             previousTagName = regularTags[index-1].Name
         }
 
@@ -491,11 +539,6 @@ func auditProject(client *service.GithubClient, projectConfig project.ProjectCon
     ), nil
 }
 
-/*
-sortReleaseAudits orders the audited releases the way every other tag comparison in the tool does.
-A lexical order reads plausibly until a version reaches double digits, and then puts v4.1.12 above
-v4.1.9 in every table.
-*/
 func sortReleaseAudits(releaseAudits []types.ReleaseAudit) {
     sort.SliceStable(releaseAudits, func(leftIndex, rightIndex int) bool {
         return compareSemver(releaseAudits[leftIndex].TagName, releaseAudits[rightIndex].TagName) < 0
@@ -735,7 +778,7 @@ func auditChangelog(
         }
 
         similarity := overlapRatio(normalizedReleaseBody, result.NormalizedBody)
-        if similarity < 0.60 {
+        if 0.60 > similarity {
             result.Status = types.LevelWarning
             result.Issues = append(result.Issues, fmt.Sprintf(
                 "release body and %s entry for %s differ significantly (overlap %.2f)",
@@ -808,7 +851,7 @@ func classifyDiff(
 
     if nil != release {
         normalizedBody := normalizeMarkdownBlock(release.Body)
-        if compareResponse.TotalCommits >= 3 && "" == normalizedBody {
+        if 3 <= compareResponse.TotalCommits && "" == normalizedBody {
             result.Status = maxLevelStatus(result.Status, types.LevelWarning)
             result.Issues = append(result.Issues, "release notes are empty for a non-trivial diff")
         }
@@ -883,7 +926,7 @@ func auditPresentation(
         }
 
         titleRunes := []rune(titleSummary)
-        if len(titleRunes) > 0 && false == unicode.IsUpper(titleRunes[0]) {
+        if 0 < len(titleRunes) && false == unicode.IsUpper(titleRunes[0]) {
             result.Status = types.LevelWarning
             result.Issues = append(result.Issues, fmt.Sprintf(
                 "title summary %q must start with uppercase",
@@ -911,7 +954,7 @@ func auditPresentation(
 func deriveProjectName(repository string) string {
     words := strings.Split(repository, "-")
     for index, word := range words {
-        if len(word) > 0 {
+        if 0 < len(word) {
             wordRunes := []rune(word)
             wordRunes[0] = unicode.ToUpper(wordRunes[0])
             words[index] = string(wordRunes)
@@ -940,7 +983,7 @@ func suggestCorrectedTitle(projectName, tagName, currentTitle string) string {
 
     titleSummary := matches[3]
     summaryRunes := []rune(titleSummary)
-    if len(summaryRunes) > 0 {
+    if 0 < len(summaryRunes) {
         summaryRunes[0] = unicode.ToUpper(summaryRunes[0])
         titleSummary = string(summaryRunes)
     }
@@ -1085,17 +1128,17 @@ func buildProjectAudit(
     }
 
     presentationDisplay := string(presentationStatus)
-    if types.LevelWarning == presentationStatus && warningCount > 0 {
+    if types.LevelWarning == presentationStatus && 0 < warningCount {
         presentationDisplay = fmt.Sprintf("warning (%d)", warningCount)
     }
 
     changelogDisplay := string(changelogStatus)
-    if types.LevelWarning == changelogStatus && changelogWarningCount > 0 {
+    if types.LevelWarning == changelogStatus && 0 < changelogWarningCount {
         changelogDisplay = fmt.Sprintf("warning (%d)", changelogWarningCount)
     }
 
     diffDisplay := string(diffStatus)
-    if types.LevelWarning == diffStatus && diffWarningCount > 0 {
+    if types.LevelWarning == diffStatus && 0 < diffWarningCount {
         diffDisplay = fmt.Sprintf("warning (%d)", diffWarningCount)
     }
 
@@ -1183,11 +1226,6 @@ func fetchPackagistVersions(packagistPackage string) PackagistAuditInfo {
     }
 }
 
-/*
-renderAuditOutput writes the envelope and, for the table format only, the follow-up title-fix
-block. A machine-readable format carries exactly one document per invocation, so anything appended
-after it leaves the caller with a stream no parser accepts.
-*/
 func renderAuditOutput(
     writer io.Writer,
     envelope output.Envelope,
@@ -1265,7 +1303,7 @@ func printTitleFixes(writer io.Writer, audits []types.ProjectAudit) {
             })
         }
 
-        if len(entries) > 0 {
+        if 0 < len(entries) {
             seen[repositoryKey] = true
             repos = append(repos, repoFixes{
                 key:   repositoryKey,
@@ -1375,7 +1413,7 @@ func applyChangelogDateAndLinkChecks(version, previousTagName, content, changelo
 }
 
 func shortSha(sha string) string {
-    if len(sha) >= 7 {
+    if 7 <= len(sha) {
         return sha[:7]
     }
     return sha

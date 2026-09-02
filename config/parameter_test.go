@@ -34,7 +34,7 @@ func TestRegisterParametersDeclaresTheTokenAsACredential(t *testing.T) {
 
     (&GithubAuditModule{}).RegisterParameters(registrar)
 
-    if len(registrar.plain) != 0 {
+    if 0 != len(registrar.plain) {
         t.Fatalf("no parameter may be registered in clear text, got %v", registrar.plain)
     }
 
@@ -42,7 +42,7 @@ func TestRegisterParametersDeclaresTheTokenAsACredential(t *testing.T) {
 
     value, registered := registrar.secret[ParameterGithubToken]
 
-    if !registered {
+    if false == registered {
         t.Fatalf("`%s` must be registered as a secret parameter", ParameterGithubToken)
     }
 
@@ -56,7 +56,7 @@ func TestRegisterParametersMarksTheEnvironmentVariableSecret(t *testing.T) {
 
     (&GithubAuditModule{}).RegisterParameters(registrar)
 
-    if len(registrar.marked) != 1 || registrar.marked[0] != EnvironmentGithubToken {
+    if 1 != len(registrar.marked) || EnvironmentGithubToken != registrar.marked[0] {
         t.Fatalf("`%s` must be marked secret, got %v", EnvironmentGithubToken, registrar.marked)
     }
 }

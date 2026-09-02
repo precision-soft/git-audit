@@ -138,7 +138,7 @@ func (instance Exceptions) add(repository, version, level, issue string) {
     )
 }
 
-var levelNames = []string{"integrity", "distribution", "changelog", "diff", "presentation"}
+var levelNames = []string{"integrity", "distribution", "changelog", "diff", "presentation", "supply-chain"}
 
 func releaseLevels(release *types.ReleaseAudit) map[string]*types.LevelResult {
     return map[string]*types.LevelResult{
@@ -147,6 +147,7 @@ func releaseLevels(release *types.ReleaseAudit) map[string]*types.LevelResult {
         "changelog":    &release.Changelog,
         "diff":         &release.Diff,
         "presentation": &release.Presentation,
+        "supply-chain": &release.SupplyChain,
     }
 }
 
@@ -162,9 +163,6 @@ func applyExceptions(audits []types.ProjectAudit, exceptions Exceptions) {
             for _, level := range levelNames {
                 result := releaseLevels(release)[level]
 
-                /* an exception accepts a warning, never a failure: filtering the issues of a failed
-                   level strips the only line explaining the failure and leaves the failure standing,
-                   so the audit reports red with nothing under it. */
                 if types.LevelWarning != result.Status {
                     continue
                 }
@@ -229,6 +227,7 @@ func recomputeProjectAggregates(audit *types.ProjectAudit) {
     audit.ChangelogStatus = statuses["changelog"]
     audit.DiffStatus = statuses["diff"]
     audit.PresentationStatus = statuses["presentation"]
+    audit.SupplyChainStatus = statuses["supply-chain"]
 
     audit.ChangelogDisplay = formatLevelDisplay(statuses["changelog"], warningCounts["changelog"])
     audit.DiffDisplay = formatLevelDisplay(statuses["diff"], warningCounts["diff"])
@@ -250,7 +249,7 @@ func recomputeProjectAggregates(audit *types.ProjectAudit) {
 }
 
 func formatLevelDisplay(status types.LevelStatus, warningCount int) string {
-    if types.LevelWarning == status && warningCount > 0 {
+    if types.LevelWarning == status && 0 < warningCount {
         return fmt.Sprintf("warning (%d)", warningCount)
     }
     return string(status)
@@ -281,12 +280,6 @@ func collectPendingWarnings(audits []types.ProjectAudit) []pendingWarning {
     return pending
 }
 
-/*
-reviewWarningsInteractively offers the unacknowledged warnings for acceptance and reports whether
-the exception set was modified. It is confined to the table format for the same reason
-renderAuditOutput is: a caller that asked for a machine-readable document gets one document, not a
-document followed by a plain-text question.
-*/
 func reviewWarningsInteractively(
     writer io.Writer,
     option output.Option,
@@ -336,12 +329,12 @@ func parseSelection(input string, max int) []int {
     var result []int
 
     for _, part := range strings.Fields(input) {
-        if separatorIndex := strings.Index(part, "-"); separatorIndex > 0 {
+        if separatorIndex := strings.Index(part, "-"); 0 < separatorIndex {
             from, fromErr := strconv.Atoi(part[:separatorIndex])
             to, toErr := strconv.Atoi(part[separatorIndex+1:])
             if nil == fromErr && nil == toErr {
                 for value := from; value <= to; value++ {
-                    if value >= 1 && value <= max && false == seen[value-1] {
+                    if 1 <= value && max >= value && false == seen[value-1] {
                         seen[value-1] = true
                         result = append(result, value-1)
                     }
@@ -349,7 +342,7 @@ func parseSelection(input string, max int) []int {
             }
         } else {
             number, parseErr := strconv.Atoi(part)
-            if nil == parseErr && number >= 1 && number <= max && false == seen[number-1] {
+            if nil == parseErr && 1 <= number && max >= number && false == seen[number-1] {
                 seen[number-1] = true
                 result = append(result, number-1)
             }

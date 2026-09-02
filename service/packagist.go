@@ -36,7 +36,7 @@ func GetPackagistPackageVersions(packageName string) ([]PackagistVersion, error)
         return nil, doErr
     }
 
-    if response.StatusCode() < 200 || response.StatusCode() >= 300 {
+    if 200 > response.StatusCode() || 300 <= response.StatusCode() {
         return nil, fmt.Errorf("http %d: %s", response.StatusCode(), string(response.Body()))
     }
 

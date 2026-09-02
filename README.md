@@ -250,7 +250,7 @@ Configured by `staticcheck.conf`, which disables only the two checks that contra
 
 ## Code style
 
-Go code here follows a yoda-comparison house style (`nil == err`, `false == flag`, `"" == token`), descriptive variable names (`configuration`, `repository`, `command`), `/** */` doc comments. Keep new code consistent.
+Go code here follows a yoda-comparison house style (`nil == err`, `false == flag`, `"" == token`), descriptive variable names (`configuration`, `repository`, `command`), four-space indentation, and exceptional single-star `/* */` comments. Do not run `gofmt`; keep new code consistent.
 
 ---
 
@@ -311,3 +311,9 @@ go run . sync  --repo doctrine-type,doctrine-utility,symfony-console,symfony-doc
 ```
 
 Omitting `--repo` entirely is equivalent — it targets every project in `config/project/project.go`. Use the comma-separated form when you want a specific subset (e.g. `--repo doctrine-type,doctrine-utility`). `--repo-url` is only valid with a single `--repo` value.
+
+## External project manifests and CI output
+
+`audit --config projects.json` loads `{ "mode": "merge|replace", "projects": [...] }`, validates GitHub URLs, duplicates, and changelog paths, and preserves built-ins by default. `--github-annotations` writes escaped workflow commands to stderr, keeping JSON stdout parseable.
+
+Use `--concurrency 1..32` and `--cache-dir .dev-data/cache` for atomic ETag caching. Supply-chain checks are opt-in through `--supply-chain signed-tags,checksums,sbom,attestations` or `all`; findings are warnings unless `--supply-chain-fail` is set.
