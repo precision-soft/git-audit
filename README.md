@@ -43,11 +43,14 @@ go build -o git-audit ./...
 
 ## Configuration
 
-Two things can come from env vars or an `.env` / `.env.local` file next to the binary:
+Parameters come from the `.env` / `.env.local` files next to the binary (melody reads no process environment):
 
 ```bash
 # .env.local (gitignored)
 GITHUB_TOKEN=ghp_xxx
+# optional: point the client at a proxy or a test double instead of api.github.com / raw.githubusercontent.com
+GITHUB_API_BASE=https://api.github.com
+GITHUB_RAW_BASE=https://raw.githubusercontent.com
 ```
 
 Precedence for the token: `--token` flag > `github.token` in the melody config > `GITHUB_TOKEN` env.
@@ -67,16 +70,22 @@ The token is registered as a **secret** parameter, so `debug:parameters` renders
 ### audit
 
 ```bash
-go run . audit [--token TOKEN] [--repo NAME] [--repo-url URL] [--fail-on-warning] [--exceptions PATH]
+go run . audit [--token TOKEN] [--repo NAME] [--repo-url URL] [--fail-on-warning] [--exceptions PATH] [--config PATH] [--concurrency N] [--github-annotations] [--cache-dir PATH] [--supply-chain LIST] [--supply-chain-fail]
 ```
 
-| Flag                | Meaning                                                                                                                                                                                                                                                                                                                                       |
-|---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `--token TOKEN`     | GitHub token; overrides melody `github.token` / `GITHUB_TOKEN` env.                                                                                                                                                                                                                                                                           |
-| `--repo NAME`       | Filter by repo name; pass a comma-separated list for multiple repos (e.g. `doctrine-type` or `doctrine-type,doctrine-utility`).                                                                                                                                                                                                               |
-| `--repo-url URL`    | GitHub URL for an ad-hoc repo not in the built-in project list (required when `--repo` doesn't match a known project; only valid with a single `--repo` value). Accepts HTTPS (`https://github.com/org/repo`) or SSH (`git@github.com:org/repo.git`). Ad-hoc repos default to no Packagist, a single `CHANGELOG.md`, and `GoSubmodule=false`. |
-| `--fail-on-warning` | Exit 1 on warnings, not only on failures.                                                                                                                                                                                                                                                                                                     |
-| `--exceptions PATH` | JSON file of accepted issues (default `exceptions.json`). TTY prompts to add unacknowledged warnings.                                                                                                                                                                                                                                         |
+| Flag                   | Meaning                                                                                                                                                                                                                                                                                                                                       |
+|------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `--token TOKEN`        | GitHub token; overrides melody `github.token` / `GITHUB_TOKEN` env.                                                                                                                                                                                                                                                                           |
+| `--repo NAME`          | Filter by repo name; pass a comma-separated list for multiple repos (e.g. `doctrine-type` or `doctrine-type,doctrine-utility`).                                                                                                                                                                                                               |
+| `--repo-url URL`       | GitHub URL for an ad-hoc repo not in the built-in project list (required when `--repo` doesn't match a known project; only valid with a single `--repo` value). Accepts HTTPS (`https://github.com/org/repo`) or SSH (`git@github.com:org/repo.git`). Ad-hoc repos default to no Packagist, a single `CHANGELOG.md`, and `GoSubmodule=false`. |
+| `--fail-on-warning`    | Exit 1 on warnings, not only on failures.                                                                                                                                                                                                                                                                                                     |
+| `--exceptions PATH`    | JSON file of accepted issues (default `exceptions.json`). TTY prompts to add unacknowledged warnings.                                                                                                                                                                                                                                         |
+| `--config PATH`        | JSON project manifest `{ "mode": "merge                                                                                                                                                                                                                                                                                                       |
+| `--concurrency N`      | Projects audited at a time, 1 to 32 (default 4).                                                                                                                                                                                                                                                                                              |
+| `--github-annotations` | Write one `::warning` / `::error` workflow command per issue to stderr; stdout stays the plain document, so `--format json` remains parseable in a GitHub Actions step.                                                                                                                                                                       |
+| `--cache-dir PATH`     | Cache GitHub responses by `ETag` under `PATH` (off unless set; nothing is written to the working directory otherwise). A cache that cannot be read or written is a miss, never a failure.                                                                                                                                                     |
+| `--supply-chain LIST`  | Opt-in checks per release: `signed-tags`, `checksums`, `sbom`, `attestations`, or `all`. Findings are warnings on the `supply-chain` level; a project whose calls fail carries the failure on that level and the audit continues.                                                                                                             |
+| `--supply-chain-fail`  | Report supply-chain findings as failures instead of warnings.                                                                                                                                                                                                                                                                                 |
 
 #### Audit rules
 
@@ -88,7 +97,7 @@ go run . audit [--token TOKEN] [--repo NAME] [--repo-url URL] [--fail-on-warning
 | `diff`         | Previous-tag compare has ≥1 commit; non-trivial diffs must have release notes.                                                                                                                             |
 | `presentation` | Title matches `<Name> vX.Y.Z - <Summary>`; only whitelisted `## ` sections.                                                                                                                                |
 
-Projects are audited in parallel (4 at a time). The summary block aggregates per-level status; per-repo issue blocks follow.
+Projects are audited in parallel (`--concurrency`, 4 by default). The summary block aggregates per-level status, `supply-chain` included (`n/a` unless requested); per-repo issue blocks follow.
 
 ### sync
 
@@ -226,6 +235,7 @@ The default gate is fast and offline. It covers semver comparison, overlap ratio
 
 ```bash
 go test -tags=e2e ./...
+go test -count=1 -race ./cli/ ./service/
 ```
 
 `main_test.go` compiles the binary and runs it out of a scratch directory, asserting on stdout, the exit code, and the files it leaves behind — including that the GitHub token is redacted in `debug:parameters` and that `--repo-url` clones a scratch repository built with git plumbing. Anything needing a prerequisite the module cannot provide (git, a real GitHub token) skips rather than fails. The build tag keeps all of it out of the default gate.
@@ -250,7 +260,7 @@ Configured by `staticcheck.conf`, which disables only the two checks that contra
 
 ## Code style
 
-Go code here follows a yoda-comparison house style (`nil == err`, `false == flag`, `"" == token`), descriptive variable names (`configuration`, `repository`, `command`), four-space indentation, and exceptional single-star `/* */` comments. Do not run `gofmt`; keep new code consistent.
+Go code here follows a yoda-comparison house style (`nil == err`, `false == flag`, `"" == token`), descriptive variable names (`configuration`, `repository`, `command`), four-space indentation and `/* */` comments only — and few of them: a comment earns its place when the code is tangled or when something deliberate would otherwise be "fixed". Do not run `gofmt`; keep new code consistent.
 
 ---
 
@@ -314,6 +324,10 @@ Omitting `--repo` entirely is equivalent — it targets every project in `config
 
 ## External project manifests and CI output
 
-`audit --config projects.json` loads `{ "mode": "merge|replace", "projects": [...] }`, validates GitHub URLs, duplicates, and changelog paths, and preserves built-ins by default. `--github-annotations` writes escaped workflow commands to stderr, keeping JSON stdout parseable.
+`audit --config projects.json` loads `{ "mode": "merge|replace", "projects": [...] }` — the same fields as `config/project/project.go` (`name`, `githubUrl`, `packagistUrl`, `goSubmodule`, `changelogPaths`). `merge` keeps the built-ins and overrides them by name; `replace` audits only the manifest. A misspelled key, a URL without an owner and a repository, a duplicate URL or a changelog path that escapes the repository is refused before anything is fetched.
 
-Use `--concurrency 1..32` and `--cache-dir .dev-data/cache` for atomic ETag caching. Supply-chain checks are opt-in through `--supply-chain signed-tags,checksums,sbom,attestations` or `all`; findings are warnings unless `--supply-chain-fail` is set.
+`--github-annotations` writes one workflow command per issue to stderr (`::warning title=<org>/<repo> <tag> <level>::<issue>`, `::error` for a failed level), in a fixed level order, with only the title escaped as a property; stdout stays the document, so `--format json` is still parseable in the same step. melody's boot log also lands on stderr as json lines, which the runner ignores.
+
+`--cache-dir PATH` keeps GitHub responses by `ETag` and revalidates them with `If-None-Match`; entries are written atomically with mode `0600`. It is off unless set, and a cache that cannot be read or written costs nothing but the cache. The key is the URL alone: an entity tag is only ever offered, and GitHub answers a caller that may not see a resource with 404, never with 304.
+
+Supply-chain checks are opt-in through `--supply-chain signed-tags,checksums,sbom,attestations` or `all`. They run after the main pass, project by project: a release without a signed tag, a checksum asset, an SBOM asset or a verified artifact attestation carries one issue per missing item on its `supply-chain` level, and a project whose GitHub calls fail carries that failure on the same level instead of aborting the audit. Findings are warnings unless `--supply-chain-fail` is set, in which case they fail the release and the project like any other level.
