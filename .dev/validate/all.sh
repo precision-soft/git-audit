@@ -23,7 +23,7 @@ for FLAG_STRING in "$@"; do
             println "  -h         show this help and exit"
             println "  --all      validate all packages (default)"
             println "  --staged   validate only if staged .go changes exist"
-            println "  --e2e      also vet and run the end-to-end suite ( builds the binary )"
+            println "  --e2e      also vet and run the end-to-end suite ( builds the binary ) and the race detector"
             println "  --audit    also scan for known vulnerabilities ( needs: network )"
             exit 0
             ;;
@@ -69,7 +69,7 @@ run_section "go build" "${TAG_VALIDATE}" "go" -- \
     run_in_service_shell "${SERVICE_NAME_STRING}" "go build ./..."
 
 run_section "go test" "${TAG_VALIDATE}" "go" -- \
-    run_in_service_shell "${SERVICE_NAME_STRING}" "go test ./..."
+    run_in_service_shell "${SERVICE_NAME_STRING}" "go test -count=1 ./..."
 
 if [[ "true" = "${E2E_REQUESTED_STRING}" ]]; then
     run_section "go vet e2e" "${TAG_VALIDATE}" "go" -- \
@@ -77,6 +77,9 @@ if [[ "true" = "${E2E_REQUESTED_STRING}" ]]; then
 
     run_section "go test e2e" "${TAG_VALIDATE}" "go" -- \
         run_in_service_shell "${SERVICE_NAME_STRING}" "go test -tags=e2e -count=1 ./..."
+
+    run_section "go test race" "${TAG_VALIDATE}" "go" -- \
+        run_in_service_shell "${SERVICE_NAME_STRING}" "go test -count=1 -race ./cli/ ./service/"
 fi
 
 run_section "staticcheck" "${TAG_VALIDATE}" "go" -- \

@@ -26,13 +26,13 @@ jobs:
         timeout-minutes: 20
         steps:
             -   uses: actions/checkout@v7
-            # 1.25.x + check-latest is the same decision the Dockerfile makes by leaving the base image on a
+            # 1.26.x + check-latest is the same decision the Dockerfile makes by leaving the base image on a
             # floating patch tag: every vulnerability reported here lived in the standard library, so
             # pinning the patch would freeze the vulnerability rather than the findings. setup-go v7 reads
             # go.mod's `go 1.25.0` as that exact patch, which is why the spec is written here.
             -   uses: actions/setup-go@v7
                 with:
-                    go-version: 1.25.x
+                    go-version: 1.26.x
                     check-latest: true
                     cache: true
             -   name: build
@@ -46,6 +46,9 @@ jobs:
             # -count=1 because a cached pass would certify a binary that was never built
             -   name: test ( e2e )
                 run: go test -tags=e2e -count=1 ./...
+            # the parallel audit shares one client across up to 32 goroutines; the detector needs cgo, which the runner has
+            -   name: test ( race )
+                run: go test -count=1 -race ./cli/ ./service/
             # the versions are read back out of the dev image, so a rebuild and a CI run can never
             # disagree about which analyser produced the findings
             -   name: read the pinned linter versions from the dev image
@@ -87,7 +90,7 @@ jobs:
             -   uses: actions/checkout@v7
             -   uses: actions/setup-go@v7
                 with:
-                    go-version: 1.25.x
+                    go-version: 1.26.x
                     check-latest: true
                     cache: true
             -   name: fuzz smoke
