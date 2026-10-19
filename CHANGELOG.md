@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2026-10-19
+
+### Fixed
+
+- `.dev/docker/Dockerfile` — `sync` failed every clone with `detected dubious ownership`: the container runs as root over a bind mount the host user owns, and the `safe.directory` the profile sets covers `/app/` alone. The image trusts `/app/.dev-data/clones/*` in the system git config, so a non-interactive `exec` that loads no profile is covered too
+
+### Changed
+
+- `go.mod` — melody `v3.13.0` → `v3.14.0`; none of its breaking changes touch a package this module imports
+
 ## 2026-09-02
 
 ### Fixed

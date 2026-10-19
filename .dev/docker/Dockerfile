@@ -17,6 +17,10 @@ ENV GONOSUMDB=github.com/precision-soft
 
 RUN apk add --update --no-cache git shadow bash gcc musl-dev
 
+# the bind-mounted clones belong to the host user while the container runs as root; git >= 2.46
+# reads a trailing /* as a prefix match, so every clone under the directory is trusted
+RUN git config --system --add safe.directory "${ROOT_PATH}.dev-data/clones/*"
+
 ARG STATICCHECK_VERSION=v0.8.1
 RUN go install honnef.co/go/tools/cmd/staticcheck@${STATICCHECK_VERSION}
 
