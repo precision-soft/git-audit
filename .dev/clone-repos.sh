@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+. "$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/utility.sh"
+
 CLONE_ROOT=".dev-data/clones"
 
 REPOSITORIES=(
@@ -21,7 +23,7 @@ for REPOSITORY_URL in "${REPOSITORIES[@]}"; do
     TARGET="${CLONE_ROOT}/${NAME}"
 
     if [ -d "${TARGET}/.git" ]; then
-        echo "reset ${NAME}"
+        println "reset ${NAME}"
         git -C "${TARGET}" fetch --tags --prune origin
         git -C "${TARGET}" remote set-head origin --auto >/dev/null
         DEFAULT_BRANCH="$(git -C "${TARGET}" symbolic-ref --short refs/remotes/origin/HEAD)"
@@ -30,7 +32,7 @@ for REPOSITORY_URL in "${REPOSITORIES[@]}"; do
         git -C "${TARGET}" reset --hard "origin/${DEFAULT_BRANCH}"
         git -C "${TARGET}" clean -fdx
     else
-        echo "clone ${NAME}"
+        println "clone ${NAME}"
         git clone "${REPOSITORY_URL}" "${TARGET}"
     fi
 done

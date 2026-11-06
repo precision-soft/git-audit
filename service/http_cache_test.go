@@ -96,11 +96,7 @@ func TestCachedResponseIsReplayedOnNotModified(t *testing.T) {
     }
 }
 
-/*
-the key deliberately ignores the token: a cached entity tag is only ever offered as If-None-Match,
-and GitHub answers a caller that may not see the resource with 404, never with 304, so a body cached
-under one token is never replayed to a caller the server would refuse
-*/
+/* github answers 404, never 304, to a caller that may not see the resource, so the key can ignore the token */
 func TestCacheKeyIgnoresTheToken(t *testing.T) {
     var receivedEntityTag string
     server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -122,5 +118,16 @@ func TestCacheKeyIgnoresTheToken(t *testing.T) {
     }
     if `"etag-1"` != receivedEntityTag {
         t.Fatalf("the entry written under the first token must be offered under the second, got %q", receivedEntityTag)
+    }
+}
+
+func TestACacheEntryWithoutABodyIsAMiss(t *testing.T) {
+    directory := t.TempDir()
+    if writeErr := os.WriteFile(cachePath(directory, "https://example.test/releases"), []byte(`{"etag":"\"a\""}`), 0o600); nil != writeErr {
+        t.Fatal(writeErr)
+    }
+
+    if cached := readCachedResponse(directory, "https://example.test/releases"); nil != cached {
+        t.Fatalf("an entry with nothing to replay must not be revalidated, got %#v", cached)
     }
 }

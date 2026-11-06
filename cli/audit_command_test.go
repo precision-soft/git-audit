@@ -648,3 +648,154 @@ func TestAuditProjectsParallelAuditsEveryProject(t *testing.T) {
         }
     }
 }
+
+func TestAuditChangelogFailsWhenTheHostIsUnavailableButNotWhenTheFileIsAbsent(t *testing.T) {
+    paths := []string{"CHANGELOG.md"}
+
+    for name, testCase := range map[string]struct {
+        err    error
+        status types.LevelStatus
+    }{
+        "absent":    {&service.HttpStatusError{StatusCode: 404}, types.LevelNotApplicable},
+        "forbidden": {&service.HttpStatusError{StatusCode: 403, Body: "denied"}, types.LevelFailed},
+        "outage":    {&service.HttpStatusError{StatusCode: 503}, types.LevelFailed},
+        "transport": {fmt.Errorf("dial tcp: refused"), types.LevelFailed},
+    } {
+        result := auditChangelog("v1.0.0", "", nil, paths, map[string]ChangelogSource{"CHANGELOG.md": {Err: testCase.err}})
+        if testCase.status != result.Status {
+            t.Errorf("%s: expected %s, got %s", name, testCase.status, result.Status)
+        }
+        if types.LevelFailed == testCase.status && 1 != len(result.Issues) {
+            t.Errorf("%s: a failure needs its reason, got %v", name, result.Issues)
+        }
+    }
+}
+
+func TestAuditChangelogNamesAnUnavailablePathWhenTheVersionIsNotFound(t *testing.T) {
+    result := auditChangelog(
+        "v1.0.0",
+        "",
+        nil,
+        []string{"CHANGELOG.md", "docs/CHANGELOG.md"},
+        map[string]ChangelogSource{
+            "CHANGELOG.md":      {Content: "# Changelog\n"},
+            "docs/CHANGELOG.md": {Err: &service.HttpStatusError{StatusCode: 503}},
+        },
+    )
+
+    if types.LevelFailed != result.Status || 2 != len(result.Issues) {
+        t.Fatalf("expected a failure with both reasons, got %s %v", result.Status, result.Issues)
+    }
+}
+
+func TestProjectAuditCountsAnIntegrityWarning(t *testing.T) {
+    audit := buildProjectAudit("acme", "widget", "Widget", "", -1, 1, 1, 0, []types.ReleaseAudit{{
+        TagName:   "v1.0.0",
+        Integrity: types.LevelResult{Status: types.LevelWarning, Issues: []string{"commit mismatch"}},
+        Changelog: types.LevelResult{Status: types.LevelOk},
+    }})
+
+    if types.LevelWarning != audit.IntegrityStatus || types.StatusWarning != audit.Status {
+        t.Fatalf("expected the warning to reach the project, got %s / %s", audit.IntegrityStatus, audit.Status)
+    }
+}
+
+func TestProjectAuditKeepsAFailedIntegrityOverALaterWarning(t *testing.T) {
+    audit := buildProjectAudit("acme", "widget", "Widget", "", -1, 2, 2, 0, []types.ReleaseAudit{
+        {TagName: "v1.0.0", Integrity: types.LevelResult{Status: types.LevelFailed}},
+        {TagName: "v1.1.0", Integrity: types.LevelResult{Status: types.LevelWarning}},
+    })
+
+    if types.LevelFailed != audit.IntegrityStatus {
+        t.Fatalf("expected failed, got %s", audit.IntegrityStatus)
+    }
+}
+
+func TestProjectAuditReportsAProjectWithoutAChangelogAsNotApplicable(t *testing.T) {
+    audit := buildProjectAudit("acme", "widget", "Widget", "", -1, 1, 1, 0, []types.ReleaseAudit{{
+        TagName:   "v1.0.0",
+        Integrity: types.LevelResult{Status: types.LevelOk},
+        Changelog: types.LevelResult{Status: types.LevelNotApplicable},
+    }})
+
+    if types.LevelNotApplicable != audit.ChangelogStatus {
+        t.Fatalf("expected n/a, got %s", audit.ChangelogStatus)
+    }
+}
+
+func TestDatedHeadingDoesNotTakeTheFirstBulletAsItsTitle(t *testing.T) {
+    content := "## [v1.0.0] - 2026-01-01\n- the first thing\n"
+
+    if title, found := extractChangelogTitle(content, "v1.0.0"); true == found {
+        t.Fatalf("a dated heading has no title, got %q", title)
+    }
+
+    titled := "## [v1.0.0] - 2026-01-01 - First release\r\n- the first thing\r\n"
+    if title, found := extractChangelogTitle(titled, "v1.0.0"); false == found || "First release" != title {
+        t.Fatalf("expected the title from a crlf heading, got %q / %t", title, found)
+    }
+}
+
+func TestReleaseHasMatchingTagExemptsSubmoduleTagsOnlyWhereTheyAreFiltered(t *testing.T) {
+    regularTags := map[string]bool{"v1.0.0": true}
+
+    if false == releaseHasMatchingTag("v1.0.0", regularTags, false) {
+        t.Error("a regular tag matches")
+    }
+    if false == releaseHasMatchingTag("integrations/cron/v1.0.0", regularTags, true) {
+        t.Error("a submodule tag is filtered out of the regular tags, not missing")
+    }
+    if true == releaseHasMatchingTag("integrations/cron/v1.0.0", regularTags, false) {
+        t.Error("without submodule filtering it has no tag")
+    }
+    if true == releaseHasMatchingTag("v9.9.9", regularTags, true) {
+        t.Error("a release without any tag stays reported")
+    }
+}
+
+func TestTitleFixesQuoteForTheShellAndSkipOtherIssues(t *testing.T) {
+    var writer bytes.Buffer
+    printTitleFixes(&writer, []types.ProjectAudit{{
+        OrganizationName: "acme",
+        RepositoryName:   "widget",
+        ProjectName:      "Widget",
+        Releases: []types.ReleaseAudit{
+            {
+                TagName:      "v1.0.0",
+                ReleaseTitle: "Widget v1.0.0 - $(touch pwned) it's",
+                Presentation: types.LevelResult{Issues: []string{"title summary must start with uppercase"}},
+            },
+            {
+                TagName:      "v2.0.0",
+                Presentation: types.LevelResult{Issues: []string{"non-standard section: ## Titles"}},
+            },
+        },
+    }})
+
+    rendered := writer.String()
+    if false == strings.Contains(rendered, `--title 'Widget v1.0.0 - $(touch pwned) it'\''s'`) {
+        t.Errorf("expected the title single-quoted, got:\n%s", rendered)
+    }
+    if true == strings.Contains(rendered, "v2.0.0") {
+        t.Errorf("a section name is not a title issue, got:\n%s", rendered)
+    }
+}
+
+func TestAuditTableOrdersIssuesBySemver(t *testing.T) {
+    table := buildAuditTable([]types.ProjectAudit{{
+        OrganizationName: "acme",
+        RepositoryName:   "widget",
+        Releases: []types.ReleaseAudit{
+            {TagName: "v4.1.12", Diff: types.LevelResult{Issues: []string{"later"}}},
+            {TagName: "v4.1.9", Diff: types.LevelResult{Issues: []string{"earlier"}}},
+        },
+    }}, types.StatusWarning, service.RateLimitInfo{})
+
+    rendered, marshalErr := json.Marshal(table)
+    if nil != marshalErr {
+        t.Fatal(marshalErr)
+    }
+    if strings.Index(string(rendered), "v4.1.12") < strings.Index(string(rendered), "v4.1.9") {
+        t.Errorf("v4.1.9 must come first, got %s", rendered)
+    }
+}

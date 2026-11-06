@@ -6,11 +6,7 @@ import (
     "golang.org/x/term"
 )
 
-/*
-A minimum floor and no maximum cap: melody's TableMaxWidth defaults to 120 when unset, which wraps
-on a wide terminal and on a redirected stdout alike. The width is auto-sized from the controlling
-terminal instead, and effectively unlimited when stdout is not one, so the data drives it.
-*/
+/* melody's default of 120 wraps on a wide terminal and on a redirected stdout alike */
 
 const (
     autoTableMinWidth       = 120
@@ -18,17 +14,17 @@ const (
 )
 
 func autoTableMaxWidth() int {
-    fd := int(os.Stdout.Fd())
-    if false == term.IsTerminal(fd) {
+    fileDescriptor := int(os.Stdout.Fd())
+    if false == term.IsTerminal(fileDescriptor) {
         return autoTableUnlimitedWidth
     }
 
-    width, _, err := term.GetSize(fd)
+    width, _, err := term.GetSize(fileDescriptor)
     if nil != err || 1 > width {
         return autoTableUnlimitedWidth
     }
 
-    if width < autoTableMinWidth {
+    if autoTableMinWidth > width {
         return autoTableMinWidth
     }
     return width

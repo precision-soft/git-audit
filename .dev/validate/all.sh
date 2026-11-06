@@ -45,6 +45,12 @@ for FLAG_STRING in "$@"; do
     esac
 done
 
+if [[ "true" = "${STAGED_ONLY_STRING}" ]]; then
+    if ! git --no-pager diff --cached --name-only --diff-filter=d | grep -q '\.go$'; then
+        exit 0
+    fi
+fi
+
 SERVICE_NAME_STRING="dev"
 
 require_docker
@@ -55,12 +61,6 @@ if ! docker_compose_service_exists "${SERVICE_NAME_STRING}"; then
 fi
 
 ensure_service_running "${SERVICE_NAME_STRING}"
-
-if [[ "true" = "${STAGED_ONLY_STRING}" ]]; then
-    if ! git --no-pager diff --cached --name-only --diff-filter=d | grep -q '\.go$'; then
-        exit 0
-    fi
-fi
 
 run_section "go vet" "${TAG_VALIDATE}" "go" -- \
     run_in_service_shell "${SERVICE_NAME_STRING}" "go vet ./..."

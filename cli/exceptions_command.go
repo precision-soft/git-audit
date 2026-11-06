@@ -60,7 +60,7 @@ func (instance *ExceptionsCommand) Run(
 
     envelope := output.NewEnvelope(meta)
 
-    if option.Format == output.FormatTable {
+    if output.FormatTable == option.Format {
         builder := output.NewTableBuilder()
 
         totalCount := 0
@@ -92,7 +92,9 @@ func (instance *ExceptionsCommand) Run(
             for version := range versionMap {
                 versions = append(versions, version)
             }
-            sort.Strings(versions)
+            sort.SliceStable(versions, func(leftIndex, rightIndex int) bool {
+                return 0 > compareSemver(versions[leftIndex], versions[rightIndex])
+            })
 
             block := builder.AddBlock(repository, []string{"version", "level", "issue", "reviewed_until"})
             for _, version := range versions {

@@ -3,10 +3,9 @@ package types
 type Status string
 
 const (
-    StatusOk            Status = "ok"
-    StatusWarning       Status = "warning"
-    StatusFailed        Status = "failed"
-    StatusNotApplicable Status = "n/a"
+    StatusOk      Status = "ok"
+    StatusWarning Status = "warning"
+    StatusFailed  Status = "failed"
 )
 
 type LevelStatus string

@@ -1,16 +1,11 @@
 //go:build e2e
 
-/*
-End-to-end coverage for the built binary: these compile the command, run it out of a scratch
-directory and assert on what an operator sees — stdout, the exit code, the files left behind. The
-build tag keeps them out of `go test ./...`, which stays the fast offline gate; run them with
-`go test -tags=e2e ./...`. A prerequisite this module cannot provide (git, a GitHub token) skips
-instead of failing.
-*/
+/* behind the e2e tag so go test ./... stays the fast offline gate; a missing prerequisite (git) skips */
 package main
 
 import (
     "encoding/json"
+    "fmt"
     "net/http"
     "net/http/httptest"
     "os"
@@ -23,17 +18,10 @@ import (
     "testing"
 )
 
-/* every line melody writes around a command starts with an ANSI escape; nothing a command
-   renders does. */
+/* every line melody writes around a command starts with an ANSI escape */
 var melodyBannerLine = regexp.MustCompile("^\x1b\\[")
 
-/*
-commandDocument returns the part of stdout that belongs to the command, with melody's framing
-removed. melody wraps every command's stdout in a coloured started/finished banner in every format
-— cli/command.go consults neither the format nor a flag — so no melody CLI is pipeable as-is and
-this module cannot change that. What it can guarantee, and what these tests assert, is that
-everything between the banners is exactly one document.
-*/
+/* commandDocument removes the coloured banner melody writes around a table; a json run has none, and removing nothing is correct */
 func commandDocument(stdout string) string {
     var kept []string
     for _, line := range strings.Split(stdout, "\n") {
@@ -55,7 +43,7 @@ var binaryPath string
 func TestMain(m *testing.M) {
     directory, tempErr := os.MkdirTemp("", "git-audit-e2e-")
     if nil != tempErr {
-        panic(tempErr)
+        exitOnSetupFailure(tempErr)
     }
 
     binaryPath = filepath.Join(directory, "git-audit")
@@ -64,25 +52,29 @@ func TestMain(m *testing.M) {
     build.Stderr = os.Stderr
     if buildErr := build.Run(); nil != buildErr {
         os.RemoveAll(directory)
-        panic(buildErr)
+        exitOnSetupFailure(buildErr)
     }
 
-    /* melody derives the project directory from the executable location, so these have to sit next
-       to the binary rather than in the working directory */
+    /* melody derives the project directory from the executable location */
     environment := "MELODY_ENV=dev\nMELODY_DEFAULT_MODE=cli\nMELODY_CLI_NAME=git-audit\nMELODY_LOG_LEVEL=error\n"
     if writeErr := os.WriteFile(filepath.Join(directory, ".env"), []byte(environment), 0o644); nil != writeErr {
         os.RemoveAll(directory)
-        panic(writeErr)
+        exitOnSetupFailure(writeErr)
     }
     if writeErr := os.WriteFile(filepath.Join(directory, ".env.local"), []byte("GITHUB_TOKEN="+canaryToken+"\n"), 0o600); nil != writeErr {
         os.RemoveAll(directory)
-        panic(writeErr)
+        exitOnSetupFailure(writeErr)
     }
 
     code := m.Run()
 
     os.RemoveAll(directory)
     os.Exit(code)
+}
+
+func exitOnSetupFailure(setupErr error) {
+    fmt.Fprintln(os.Stderr, setupErr)
+    os.Exit(1)
 }
 
 type commandResult struct {
@@ -285,6 +277,14 @@ type fakeGithub struct {
     server         *httptest.Server
     mutex          sync.Mutex
     conditionalGet map[string]int
+    authorizations map[string]int
+}
+
+func (instance *fakeGithub) authorizedRequests(authorization string) int {
+    instance.mutex.Lock()
+    defer instance.mutex.Unlock()
+
+    return instance.authorizations[authorization]
 }
 
 func (instance *fakeGithub) conditionalRequests(path string) int {
@@ -294,15 +294,16 @@ func (instance *fakeGithub) conditionalRequests(path string) int {
     return instance.conditionalGet[path]
 }
 
-/*
-startFakeGithub serves the api and the raw host from one server and answers 304 to a matching
-If-None-Match, so the binary's cache can be observed from outside
-*/
+/* startFakeGithub answers 304 to a matching If-None-Match, so the binary's cache can be observed from outside */
 func startFakeGithub(t *testing.T) *fakeGithub {
     t.Helper()
 
-    fake := &fakeGithub{conditionalGet: make(map[string]int)}
+    fake := &fakeGithub{conditionalGet: make(map[string]int), authorizations: make(map[string]int)}
     fake.server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+        fake.mutex.Lock()
+        fake.authorizations[request.Header.Get("Authorization")]++
+        fake.mutex.Unlock()
+
         body, routed := fakeGithubRoutes[request.URL.Path]
         if false == routed {
             writer.WriteHeader(http.StatusNotFound)
@@ -340,6 +341,153 @@ func pointBinaryAt(t *testing.T, fake *fakeGithub) {
     t.Cleanup(func() {
         os.WriteFile(environmentPath, []byte("GITHUB_TOKEN="+canaryToken+"\n"), 0o600)
     })
+}
+
+func pointTokenlessBinaryAt(t *testing.T, fake *fakeGithub) {
+    t.Helper()
+
+    environmentPath := filepath.Join(filepath.Dir(binaryPath), ".env.local")
+    environment := "GITHUB_API_BASE=" + fake.server.URL + "\n" +
+        "GITHUB_RAW_BASE=" + fake.server.URL + "/raw\n"
+    if writeErr := os.WriteFile(environmentPath, []byte(environment), 0o600); nil != writeErr {
+        t.Fatalf("removing the token from the binary's environment: %v", writeErr)
+    }
+    t.Cleanup(func() {
+        os.WriteFile(environmentPath, []byte("GITHUB_TOKEN="+canaryToken+"\n"), 0o600)
+    })
+}
+
+func TestBinaryRunsExceptionsWithoutAToken(t *testing.T) {
+    pointTokenlessBinaryAt(t, startFakeGithub(t))
+
+    workingDirectory := t.TempDir()
+    exceptionsPath := filepath.Join(workingDirectory, "exceptions.json")
+    if writeErr := os.WriteFile(exceptionsPath, []byte(`{}`), 0o644); nil != writeErr {
+        t.Fatalf("writing the exceptions file: %v", writeErr)
+    }
+
+    result := runBinary(t, workingDirectory, "exceptions", "--exceptions", exceptionsPath, "--format", "json")
+
+    if 0 != result.exitCode {
+        t.Fatalf("exceptions exited %d, stdout:\n%s\nstderr:\n%s", result.exitCode, result.stdout, result.stderr)
+    }
+
+    document := commandDocument(result.stdout)
+
+    var decoded map[string]any
+    if unmarshalErr := json.Unmarshal([]byte(document), &decoded); nil != unmarshalErr {
+        t.Fatalf("the rendered document is not parseable json (%v):\n%s", unmarshalErr, document)
+    }
+}
+
+func TestBinaryReportsAMissingToken(t *testing.T) {
+    fake := startFakeGithub(t)
+    pointTokenlessBinaryAt(t, fake)
+
+    for _, command := range []string{"audit", "sync"} {
+        result := runBinary(t, t.TempDir(), command)
+        combined := result.stdout + result.stderr
+
+        if 0 == result.exitCode {
+            t.Errorf("%s: expected a non-zero exit without a token, output:\n%s", command, combined)
+        }
+        if false == strings.Contains(combined, "github token required") {
+            t.Errorf("%s: expected the missing-token message, got:\n%s", command, combined)
+        }
+        if true == strings.Contains(combined, "could not resolve the config parameters") {
+            t.Errorf("%s: a missing token must not fail the boot, got:\n%s", command, combined)
+        }
+    }
+
+    if 0 != len(fake.authorizations) {
+        t.Errorf("no request may leave without a token, got %v", fake.authorizations)
+    }
+}
+
+func TestBinaryUsesTheTokenFlagWithoutAnEnvironmentToken(t *testing.T) {
+    if _, lookErr := exec.LookPath("git"); nil != lookErr {
+        t.Skip("git is not on PATH")
+    }
+
+    const flagToken = "ghp_e2eFLAG0123456789"
+    expectedAuthorization := "Bearer " + flagToken
+
+    fake := startFakeGithub(t)
+    pointTokenlessBinaryAt(t, fake)
+
+    auditResult := runBinary(t, t.TempDir(), "audit", "--token", flagToken, "--format", "json", "--config", manifestPath(t, "manifest-replace.json"))
+    decoded := decodeAuditDocument(t, auditResult)
+    if 1 != len(decoded.Data.Items) || "" != decoded.Data.Items[0].FetchError {
+        t.Fatalf("audit: expected the manifest project to be fetched, got %#v", decoded.Data.Items)
+    }
+
+    auditRequests := fake.authorizedRequests(expectedAuthorization)
+    if 0 == auditRequests {
+        t.Fatalf("audit: --token never reached the api, got %v", fake.authorizations)
+    }
+
+    origin := filepath.Join(t.TempDir(), "scratch")
+    createScratchRepository(t, origin)
+
+    syncResult := runBinary(t, t.TempDir(), "sync", "--token", flagToken, "--repo", "scratch", "--repo-url", "file://"+origin, "--format", "json")
+    combined := syncResult.stdout + syncResult.stderr
+    if true == strings.Contains(combined, "could not resolve the config parameters") || true == strings.Contains(combined, "github token required") {
+        t.Fatalf("sync: --token must be enough to run, got:\n%s", combined)
+    }
+    if auditRequests >= fake.authorizedRequests(expectedAuthorization) {
+        t.Fatalf("sync: --token never reached the api, got %v; output:\n%s", fake.authorizations, combined)
+    }
+}
+
+func TestBinaryRejectsAnUnknownSupplyChainCheckBeforeAnyRequest(t *testing.T) {
+    fake := startFakeGithub(t)
+    pointBinaryAt(t, fake)
+
+    result := runBinary(t, t.TempDir(), "audit", "--config", manifestPath(t, "manifest-replace.json"), "--supply-chain", "signed-tag")
+    if 0 == result.exitCode || false == strings.Contains(result.stdout+result.stderr, "unknown supply-chain check") {
+        t.Fatalf("expected the typo to be reported, exit %d:\n%s%s", result.exitCode, result.stdout, result.stderr)
+    }
+    if 0 != len(fake.authorizations) {
+        t.Errorf("no request may be spent on a typo, got %v", fake.authorizations)
+    }
+}
+
+func TestBinaryRequiresChecksForSupplyChainFail(t *testing.T) {
+    result := runBinary(t, t.TempDir(), "audit", "--supply-chain-fail")
+    if 0 == result.exitCode || false == strings.Contains(result.stdout+result.stderr, "--supply-chain-fail requires --supply-chain") {
+        t.Fatalf("expected the flag to be refused, exit %d:\n%s%s", result.exitCode, result.stdout, result.stderr)
+    }
+}
+
+func TestBinaryWindowsTheAuditDocument(t *testing.T) {
+    pointBinaryAt(t, startFakeGithub(t))
+
+    result := runBinary(t, t.TempDir(), "audit", "--format", "json", "--config", manifestPath(t, "manifest-merge.json"), "--limit", "1")
+    decoded := decodeAuditDocument(t, result)
+    if 1 != len(decoded.Data.Items) {
+        t.Fatalf("expected --limit 1 to return one project, got %d", len(decoded.Data.Items))
+    }
+}
+
+func TestBinaryReportsARepoUrlItCannotRead(t *testing.T) {
+    result := runBinary(t, t.TempDir(), "sync", "--token", canaryToken, "--repo", "widget", "--repo-url", "not-a-url")
+    if 0 == result.exitCode || false == strings.Contains(result.stdout+result.stderr, "could not read an owner") {
+        t.Fatalf("expected the url to be reported, exit %d:\n%s%s", result.exitCode, result.stdout, result.stderr)
+    }
+}
+
+func TestBinaryDoesNotPrintACredentialFromARepoUrlItCannotRead(t *testing.T) {
+    result := runBinary(t, t.TempDir(), "sync", "--token", canaryToken, "--repo", "widget", "--repo-url", "https://user:ghp_inurl@example.com")
+    if true == strings.Contains(result.stdout+result.stderr, "ghp_inurl") {
+        t.Fatalf("the credential must not be printed:\n%s%s", result.stdout, result.stderr)
+    }
+}
+
+func TestBinaryRefusesToApplyAChangelogFromAnotherHost(t *testing.T) {
+    result := runBinary(t, t.TempDir(), "sync", "--token", canaryToken, "--repo", "widget", "--repo-url", "https://gitlab.com/acme/widget", "--apply")
+    if 0 == result.exitCode || false == strings.Contains(result.stdout+result.stderr, "--apply needs a github.com --repo-url") {
+        t.Fatalf("expected the write to be refused, exit %d:\n%s%s", result.exitCode, result.stdout, result.stderr)
+    }
 }
 
 func manifestPath(t *testing.T, name string) string {
@@ -499,7 +647,7 @@ func TestBinaryReportsSupplyChainFields(t *testing.T) {
         "tag signature is not verified (tag reference not found)",
         "release has no checksums artifact",
         "release has no sbom artifact",
-        "release has no verified github artifact attestation",
+        "release has no github artifact attestation",
     }
     if false == reflect.DeepEqual(expectedIssues, release.SupplyChain.Issues) {
         t.Fatalf("expected the findings in a fixed order, got %v", release.SupplyChain.Issues)

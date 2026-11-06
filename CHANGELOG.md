@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## 2026-11-06
+
+### Fixed
+
+- `service/clone.go` — `sync` run with a `.dev-data/clones/<repo>` that held no git repository of its own reached the enclosing checkout through `git -C` and hard-reset it, destroying its uncommitted work; a directory that is not a clone of its own now stops that repo with an error, and an empty one is cloned into
+- `service/clone.go` — the clone was keyed by repo name alone, so `a/widget` and then `b/widget` read `a/widget`'s changelog and `--apply` overwrote `b/widget`'s release bodies with it; a clone of another origin is now refused
+- `service/clone.go` — a `https://user:token@…` url reached the sync output and the clone's `.git/config`; it is refused. git now runs with a timeout and no credential prompt, so a stalled network or a prompt cannot hang `sync`
+- `cli/sync_command.go` — `--apply --repo-url https://gitlab.com/…` read the changelog from there and wrote to the same owner and name on github.com; it is refused unless `GITHUB_API_BASE` names another host. A `--repo-url` without an owner and a repository was skipped silently with exit 0; it is now an error row
+- `cli/audit_command.go` — any failure fetching a changelog (401, 403, 429, 5xx, transport) reported `n/a`, so an outage turned the audit green; only a 404 means there is no changelog, everything else fails the level with its reason
+- `cli/audit_command.go` — a release whose commit does not match its tag warned on the release but left the project `ok`, so `--fail-on-warning` exited 0
+- `cli/audit_command.go` — a dated heading took the next line's first bullet as its title, and `sync --apply` wrote that bullet into the release title
+- `cli/audit_command.go` — the printed `gh release edit` quoted the title with double quotes, so pasting it ran any `$(...)` a repo owner had put in a release title; arguments are now single-quoted when needed
+- `cli/audit_command.go` — a typo in `--supply-chain` was reported only after the whole run had spent its quota, and `--supply-chain-fail` alone was ignored; both now stop before the first request. `--limit` and `--offset` were ignored while the json payload claimed them; `audit --format=json` now honours them
+- `cli/audit_command.go` — a `GoSubmodule` project reported `release has no matching tag` for a release on a submodule tag; issue rows sorted v4.1.12 above v4.1.9, as did `exceptions`; a section named `## Titles` produced a bogus title fix; a project with no changelog read `ok` instead of `n/a`
+- `cli/shared.go` — `## [v1.1.0-rc1]` did not end the v1.1.0 entry, so `sync` pushed the candidate's section into the release, and `## v1.1.0-rc1` was read as v1.1.0; a fence line with an info string closed the block, and a fence indented four columns counted as one
+- `cli/exceptions.go` — `reviewed_until` expired at midnight at the start of the named day; it now covers that whole day. Accepting a warning whose exception had expired left it expired, so the warning came back on every run. A `null` file panicked on the first acceptance, the save could truncate the only copy on a crash, and `audit </dev/null` counted as a terminal and printed the prompt
+- `cli/project_manifest.go` — the same repository with and without `.git` was audited twice, a url deeper than owner and repository was accepted, and content after the first document was ignored
+- `service/github.go` — the per-tag `compare` call skipped the `--cache-dir` cache, and tags and changelog paths carrying `#` or `%` were interpolated unescaped into the url
+- `service/http_cache.go` — a cache entry with an etag and no body failed the request on a 304; it is now a miss
+- `service/http_retry.go` — a 429 or 5xx carrying `Retry-After` was retried on the fixed backoff, wasting the attempts; the header is honoured up to 30s
+- `.dev/git-hooks/pre-commit` — a force-staged root `.env.local`, where the real token lives, was not rejected
+- `.dev/validate/all.sh` — `--staged` required Docker before noticing there was no Go change, so a docs commit failed with Docker down
+- `.dev/git-hook/install.sh` — every container start replaced `.git/hooks`; it now leaves a correct link alone
+- `.dev/docker/.profile` — every shell added another `safe.directory` entry
+- `.dockerignore` — `.env.local` and `.dev-data` were sent to the Docker daemon on every build
+- `README.md`, `CONTRIBUTING.md`, the PR template — corrected the sync fold rules, the `--config` row, the missing `--tag`, the number of checks, the retry behaviour, the attestation wording (presence, not verification), the gate's build configurations, and what `go install` leaves out: `.env` must sit next to the binary, or it starts as an http server
+- `README.md` — `go build -o git-audit ./...` fails with `cannot write multiple packages to non-directory`; the source build is now `go build -o git-audit .`
+- `README.md` — the commands and the ad-hoc examples used `go run .`, which only works inside a checkout, right after an install through `go install`; they now call `git-audit`, and the installation section says where the binary and its `.env.local` belong
+- `config/parameter.go` — `github.token` was a required parameter, so without `GITHUB_TOKEN` in `.env.local` every command died at boot with `could not resolve the config parameters on boot`, including `exceptions`, which never calls GitHub, and `audit` / `sync` given `--token`; the parameter is now optional, and `audit` / `sync` report `github token required` when no source provides it
+- `README.md`, `.env`, `audit --help`, the missing-token error — they offered a `GITHUB_TOKEN` environment variable and a `github.token` config entry; melody reads no process environment, so the sources are now named as `--token` and `.env.local`
+- `README.md` — the requirements named Go 1.24, while `go.mod` needs 1.26
+- `README.md` — the configuration section named `GITHUB_TOKEN` without saying how to obtain one; it now covers a fine-grained personal access token and the GitHub CLI login
+
 ## 2026-10-19
 
 ### Fixed

@@ -14,7 +14,7 @@ import (
 type gitReference struct {
     Object struct {
         Type string `json:"type"`
-        SHA  string `json:"sha"`
+        Sha  string `json:"sha"`
     } `json:"object"`
 }
 
@@ -35,7 +35,7 @@ func (instance *GithubClient) GetTagVerification(organization, repository, tag s
         return false, "lightweight tag", nil
     }
     var tagObject gitTagObject
-    endpoint = fmt.Sprintf("%s/repos/%s/%s/git/tags/%s", instance.apiBase, organization, repository, reference.Object.SHA)
+    endpoint = fmt.Sprintf("%s/repos/%s/%s/git/tags/%s", instance.apiBase, organization, repository, reference.Object.Sha)
     if getErr := instance.get(endpoint, &tagObject); nil != getErr {
         return false, "", getErr
     }

@@ -1,0 +1,6 @@
+.git
+.env.local
+.dev/docker/.env.local
+.dev-data
+var
+git-audit

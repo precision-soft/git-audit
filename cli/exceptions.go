@@ -6,6 +6,7 @@ import (
     "fmt"
     "io"
     "os"
+    "path/filepath"
     "sort"
     "strconv"
     "strings"
@@ -14,6 +15,7 @@ import (
     "github.com/precision-soft/git-audit/types"
 
     "github.com/precision-soft/melody/v3/cli/output"
+    "golang.org/x/term"
 )
 
 const exceptionDateLayout = "2006-01-02"
@@ -74,7 +76,7 @@ func (instance ExceptionEntry) Active(now time.Time) bool {
     if true == instance.ReviewedUntil.IsZero() {
         return true
     }
-    return now.Before(instance.ReviewedUntil) || now.Equal(instance.ReviewedUntil)
+    return now.Before(instance.ReviewedUntil.AddDate(0, 0, 1))
 }
 
 func loadExceptions(filePath string) (Exceptions, error) {
@@ -90,6 +92,9 @@ func loadExceptions(filePath string) (Exceptions, error) {
     if unmarshalErr := json.Unmarshal(data, &exceptions); nil != unmarshalErr {
         return nil, fmt.Errorf("parse exceptions: %w", unmarshalErr)
     }
+    if nil == exceptions {
+        return make(Exceptions), nil
+    }
 
     return exceptions, nil
 }
@@ -100,7 +105,30 @@ func saveExceptions(filePath string, exceptions Exceptions) error {
         return marshalErr
     }
 
-    return os.WriteFile(filePath, data, 0644)
+    temporary, createErr := os.CreateTemp(filepath.Dir(filePath), ".exceptions-*")
+    if nil != createErr {
+        return createErr
+    }
+    temporaryPath := temporary.Name()
+    defer os.Remove(temporaryPath)
+
+    if chmodErr := temporary.Chmod(0o644); nil != chmodErr {
+        temporary.Close()
+        return chmodErr
+    }
+    if _, writeErr := temporary.Write(data); nil != writeErr {
+        temporary.Close()
+        return writeErr
+    }
+    if syncErr := temporary.Sync(); nil != syncErr {
+        temporary.Close()
+        return syncErr
+    }
+    if closeErr := temporary.Close(); nil != closeErr {
+        return closeErr
+    }
+
+    return os.Rename(temporaryPath, filePath)
 }
 
 func (instance Exceptions) has(repository, version, level, issue string, now time.Time) bool {
@@ -127,8 +155,10 @@ func (instance Exceptions) add(repository, version, level, issue string) {
     if nil == instance[repository][version] {
         instance[repository][version] = make(map[string][]ExceptionEntry)
     }
-    for _, entry := range instance[repository][version][level] {
-        if entry.Issue == issue {
+    entries := instance[repository][version][level]
+    for entryIndex := range entries {
+        if entries[entryIndex].Issue == issue {
+            entries[entryIndex].ReviewedUntil = time.Time{}
             return
         }
     }
@@ -163,9 +193,7 @@ func applyExceptions(audits []types.ProjectAudit, exceptions Exceptions) {
             for _, level := range levelNames {
                 result := releaseLevels(release)[level]
 
-                /* an exception accepts a warning, never a failure: filtering the issues of a failed
-                   level strips the only line explaining the failure and leaves the failure standing,
-                   so the audit reports red with nothing under it. */
+                /* filtering a failed level would leave it red with no line explaining why */
                 if types.LevelWarning != result.Status {
                     continue
                 }
@@ -215,6 +243,9 @@ func recomputeProjectAggregates(audit *types.ProjectAudit) {
     }
     if false == hasLevelResults(audit, "supply-chain") {
         statuses["supply-chain"] = types.LevelNotApplicable
+    }
+    if false == hasLevelResults(audit, "changelog") {
+        statuses["changelog"] = types.LevelNotApplicable
     }
 
     for releaseIndex := range audit.Releases {
@@ -285,7 +316,9 @@ func collectPendingWarnings(audits []types.ProjectAudit) []pendingWarning {
             release := &audit.Releases[releaseIndex]
             editUrl := fmt.Sprintf(
                 "https://github.com/%s/%s/releases/edit/%s",
-                audit.OrganizationName, audit.RepositoryName, release.TagName,
+                audit.OrganizationName,
+                audit.RepositoryName,
+                release.TagName,
             )
             for _, level := range levelNames {
                 result := releaseLevels(release)[level]
@@ -301,12 +334,6 @@ func collectPendingWarnings(audits []types.ProjectAudit) []pendingWarning {
     return pending
 }
 
-/*
-reviewWarningsInteractively offers the unacknowledged warnings for acceptance and reports whether
-the exception set was modified. It is confined to the table format for the same reason
-renderAuditOutput is: a caller that asked for a machine-readable document gets one document, not a
-document followed by a plain-text question.
-*/
 func reviewWarningsInteractively(
     writer io.Writer,
     option output.Option,
@@ -340,12 +367,12 @@ func reviewWarningsInteractively(
         exceptions.add(warning.repository, warning.version, warning.level, warning.issue)
     }
 
-    return len(indices) > 0, nil
+    return 0 < len(indices), nil
 }
 
-func parseSelection(input string, max int) []int {
+func parseSelection(input string, limit int) []int {
     if true == strings.EqualFold(input, "all") {
-        result := make([]int, max)
+        result := make([]int, limit)
         for index := range result {
             result[index] = index
         }
@@ -361,7 +388,7 @@ func parseSelection(input string, max int) []int {
             to, toErr := strconv.Atoi(part[separatorIndex+1:])
             if nil == fromErr && nil == toErr {
                 for value := from; value <= to; value++ {
-                    if 1 <= value && max >= value && false == seen[value-1] {
+                    if 1 <= value && limit >= value && false == seen[value-1] {
                         seen[value-1] = true
                         result = append(result, value-1)
                     }
@@ -369,7 +396,7 @@ func parseSelection(input string, max int) []int {
             }
         } else {
             number, parseErr := strconv.Atoi(part)
-            if nil == parseErr && 1 <= number && max >= number && false == seen[number-1] {
+            if nil == parseErr && 1 <= number && limit >= number && false == seen[number-1] {
                 seen[number-1] = true
                 result = append(result, number-1)
             }
@@ -381,9 +408,5 @@ func parseSelection(input string, max int) []int {
 }
 
 func isInteractiveTTY() bool {
-    fileInfo, statErr := os.Stdin.Stat()
-    if nil != statErr {
-        return false
-    }
-    return fileInfo.Mode()&os.ModeCharDevice != 0
+    return true == term.IsTerminal(int(os.Stdin.Fd()))
 }

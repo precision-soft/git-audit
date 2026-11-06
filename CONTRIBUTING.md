@@ -23,8 +23,8 @@ The container mounts the repository at the working directory and keeps the Go bu
 The gate lives in one place — [`.dev/validate/all.sh`](./.dev/validate/all.sh) — so a section is added once and every caller inherits it. Run it from the host, before opening a pull request:
 
 ```bash
-.dev/validate/all.sh            # build, vet, test, staticcheck — on both build configurations
-.dev/validate/all.sh --e2e      # also the end-to-end suite (builds the binary) and the race detector
+.dev/validate/all.sh            # build, vet, test, staticcheck
+.dev/validate/all.sh --e2e      # also the e2e build configuration (vet and tests, builds the binary) and the race detector
 .dev/validate/all.sh --audit    # also scan for known vulnerabilities (needs the network)
 ```
 
@@ -32,9 +32,9 @@ The gate lives in one place — [`.dev/validate/all.sh`](./.dev/validate/all.sh)
 
 Every test leg passes **`-count=1`**. Without it `go test` returns a cached result and prints `ok … (cached)`, which certifies a binary that was never built from the current tree. Count `--- PASS` lines (`-v`) rather than trusting `ok`.
 
-The end-to-end tests sit behind the **`e2e` build tag**, so `go test ./...` does not see them. The gate runs both configurations — `go vet`, `go vet -tags=e2e`, `go test -count=1`, `go test -tags=e2e -count=1` — because a test that only exists behind a tag is a test the default gate cannot regress. `--e2e` also runs `go test -race` over `cli/` and `service/`: the parallel audit shares one client across up to 32 goroutines, and the detector is the only thing that reads that.
+The end-to-end tests sit behind the **`e2e` build tag**, so `go test ./...` does not see them. With `--e2e` the gate runs both configurations — `go vet`, `go vet -tags=e2e`, `go test -count=1`, `go test -tags=e2e -count=1` — because a test that only exists behind a tag is a test the default gate cannot regress. `--e2e` also runs `go test -race` over `cli/` and `service/`: the parallel audit shares one client across up to 32 goroutines, and the detector is the only thing that reads that.
 
-The git `pre-commit` hook ([`.dev/git-hooks/pre-commit`](./.dev/git-hooks/pre-commit)) is a deliberately thin caller of the same script (`--staged`, which does nothing unless the index carries a `.go` change). It checks and never fixes. It adds one guard CI cannot: it reads the index and rejects a force-staged `.dev-data/` path or `.dev/docker/.env.local`, both of which are gitignored and, by the time a push reaches CI, would already be in the history.
+The git `pre-commit` hook ([`.dev/git-hooks/pre-commit`](./.dev/git-hooks/pre-commit)) is a deliberately thin caller of the same script (`--staged`, which does nothing unless the index carries a `.go` change). It checks and never fixes. It adds one guard CI cannot: it reads the index and rejects a force-staged `.dev-data/` path, `.env.local` or `.dev/docker/.env.local`, all of which are gitignored and, by the time a push reaches CI, would already be in the history.
 
 ### Development toolchain
 
@@ -49,7 +49,7 @@ The staticcheck section reports and moves on when the image predates the binary:
 
 ### Continuous integration
 
-[`.github/workflows/ci.yml`](./.github/workflows/ci.yml) cannot call `.dev/validate/all.sh` — the script needs Docker and a compose project — so it runs the same commands natively instead: `build`, `vet`, `vet ( e2e )`, `test`, `test ( e2e )`, `staticcheck`, `govulncheck` and a `fuzz smoke` leg.
+[`.github/workflows/ci.yml`](./.github/workflows/ci.yml) cannot call `.dev/validate/all.sh` — the script needs Docker and a compose project — so it runs the same commands natively instead: `build`, `vet`, `vet ( e2e )`, `test`, `test ( e2e )`, `race`, `staticcheck`, `govulncheck` and a `fuzz smoke` leg.
 
 **CI reads the pinned linter versions out of the dev image's Dockerfile** rather than carrying its own copies, so a pin moves in exactly one place and the two can never disagree.
 

@@ -16,18 +16,14 @@ import (
 
 var (
     goSubmoduleTagRegex        = regexp.MustCompile(`^.+/v\d+\.\d+\.\d+$`)
-    changelogHeadingV2         = regexp.MustCompile(`(?m)^##\s+\[(v\d+\.\d+\.\d+)\]`)
-    changelogHeadingV1         = regexp.MustCompile(`(?m)^##\s+(v\d+\.\d+\.\d+)`)
+    changelogHeadingBracketed  = regexp.MustCompile(`(?m)^##[ \t]+\[(v\d+\.\d+\.\d+)\]`)
+    changelogHeadingBare       = regexp.MustCompile(`(?m)^##[ \t]+(v\d+\.\d+\.\d+)(?:\s|$)`)
+    changelogEntryBoundary     = regexp.MustCompile(`(?m)^##[ \t]+\[?v\d+\.\d+\.\d+`)
     changelogLinkReferenceLine = regexp.MustCompile(`^\[[^\]]+\]:\s+https?://\S+`)
     codeFenceMarker            = regexp.MustCompile("^(`{3,}|~{3,})")
 )
 
-/*
-markdownHeading reports the level and the text of an ATX heading line, and 0 for a line that is
-not one. The indent is counted rather than trimmed: markdown accepts a heading indented by up to
-three columns, and a fourth makes the line an indented code block instead. A heading with no text
-names no section.
-*/
+/* the indent is counted, not trimmed: a fourth column makes the line an indented code block */
 func markdownHeading(line string) (int, string) {
     if 3 < markdownIndentWidth(line) {
         return 0, ""
@@ -68,22 +64,19 @@ func markdownIndentWidth(line string) int {
     return width
 }
 
-/*
-codeFenceScanner tracks whether a markdown line sits inside a fenced code block. Both changelog
-entries and release bodies document markdown, so both carry `## ` lines that are sample text
-rather than sections the project writes.
-*/
+/* changelogs and release bodies document markdown, so a `## ` line inside a fence is sample text */
 type codeFenceScanner struct {
     fence string
 }
 
-/*
-inside consumes one line, in order, and reports whether it belongs to a fenced code block. The
-delimiters themselves count as inside, and per CommonMark a closer only counts when it repeats
-the opener's character at least as many times.
-*/
+/* per CommonMark a closer is the opener's character alone, repeated at least as many times */
 func (instance *codeFenceScanner) inside(line string) bool {
-    marker := codeFenceMarker.FindString(strings.TrimSpace(line))
+    if 3 < markdownIndentWidth(line) {
+        return "" != instance.fence
+    }
+
+    trimmed := strings.TrimSpace(line)
+    marker := codeFenceMarker.FindString(trimmed)
     if "" == marker {
         return "" != instance.fence
     }
@@ -94,7 +87,7 @@ func (instance *codeFenceScanner) inside(line string) bool {
         return true
     }
 
-    if marker[0] == instance.fence[0] && len(marker) >= len(instance.fence) {
+    if marker == trimmed && marker[0] == instance.fence[0] && len(marker) >= len(instance.fence) {
         instance.fence = ""
     }
 
@@ -111,7 +104,7 @@ func resolveGithubClient(
         return releaseService.NewClientWithToken(cliToken), nil
     }
     if "" == releaseService.Token() {
-        return nil, fmt.Errorf("github token required (--token or GITHUB_TOKEN env)")
+        return nil, fmt.Errorf("github token required (--token or GITHUB_TOKEN in .env.local)")
     }
     return releaseService.Client(), nil
 }
@@ -142,11 +135,6 @@ func formatRateLimitLine(info service.RateLimitInfo) string {
     return strings.Join(parts, " | ")
 }
 
-/*
-parseGithubUrl extracts the organization and repository from any common GitHub URL form. The SSH
-forms are accepted so that a fork can put a private-repo SSH URL in the project list, or pass one
-through --repo-url, without further configuration.
-*/
 func parseGithubUrl(url string) (organization, repository string) {
     trimmed := strings.TrimRight(url, "/")
     trimmed = strings.TrimPrefix(trimmed, "https://")
@@ -175,36 +163,16 @@ func resolveChangelogPaths(projectConfig project.ProjectConfig) []string {
 }
 
 func extractChangelogEntry(content string, version string) (string, bool) {
-    matchIndexes := changelogHeadingV2.FindAllStringSubmatchIndex(content, -1)
-    if 0 < len(matchIndexes) {
-        for matchIndex, match := range matchIndexes {
-            currentVersion := content[match[2]:match[3]]
-            if currentVersion != version {
+    for _, heading := range []*regexp.Regexp{changelogHeadingBracketed, changelogHeadingBare} {
+        for _, match := range heading.FindAllStringSubmatchIndex(content, -1) {
+            if content[match[2]:match[3]] != version {
                 continue
             }
 
-            start := skipRestOfHeadingLine(content, match[1])
+            start := skipRestOfHeadingLine(content, match[3])
             end := len(content)
-            if matchIndex+1 < len(matchIndexes) {
-                end = matchIndexes[matchIndex+1][0]
-            }
-
-            return stripTrailingLinkReferences(strings.TrimSpace(content[start:end])), true
-        }
-    }
-
-    matchIndexes = changelogHeadingV1.FindAllStringSubmatchIndex(content, -1)
-    if 0 < len(matchIndexes) {
-        for matchIndex, match := range matchIndexes {
-            currentVersion := content[match[2]:match[3]]
-            if currentVersion != version {
-                continue
-            }
-
-            start := skipRestOfHeadingLine(content, match[1])
-            end := len(content)
-            if matchIndex+1 < len(matchIndexes) {
-                end = matchIndexes[matchIndex+1][0]
+            if boundary := changelogEntryBoundary.FindStringIndex(content[start:]); nil != boundary {
+                end = start + boundary[0]
             }
 
             return stripTrailingLinkReferences(strings.TrimSpace(content[start:end])), true
@@ -222,12 +190,7 @@ func skipRestOfHeadingLine(content string, start int) int {
     return start + newlineIndex + 1
 }
 
-/*
-stripTrailingLinkReferences drops trailing markdown link reference definitions (e.g.
-`[v1.0.0]: https://.../compare/...`) from an extracted changelog body. The last version's section
-has no next heading to stop at, so it otherwise absorbs the reference block at the bottom of the
-file.
-*/
+/* the last section has no next heading to stop at, so it would absorb the link block of the file */
 func stripTrailingLinkReferences(body string) string {
     if "" == body {
         return body
@@ -279,10 +242,7 @@ func compareSemver(left, right string) int {
         }
     }
 
-    /*
-       Per semver a pre-release ranks below its final release, while a raw string compare does the
-       opposite: the longer "v1.0.0-rc1" sorts above "v1.0.0".
-    */
+    /* a raw string compare would sort "v1.0.0-rc1" above "v1.0.0" */
     leftPrerelease := semverPrerelease(left)
     rightPrerelease := semverPrerelease(right)
     switch {
@@ -319,11 +279,7 @@ func semverPrerelease(tag string) string {
     return ""
 }
 
-/*
-comparePrerelease compares two non-empty pre-release strings per semver §11, where numeric
-identifiers rank below non-numeric ones and a longer set of identifiers outranks a shorter one
-that it agrees with (rc.2 < rc.10, rc < rc.1).
-*/
+/* comparePrerelease follows semver §11: rc.2 < rc.10, rc < rc.1 */
 func comparePrerelease(left, right string) int {
     leftIdentifiers := strings.Split(left, ".")
     rightIdentifiers := strings.Split(right, ".")
@@ -350,7 +306,7 @@ func comparePrereleaseIdentifier(left, right string) int {
     rightNumeric := nil == rightErr
 
     switch {
-    case leftNumeric && rightNumeric:
+    case true == leftNumeric && true == rightNumeric:
         switch {
         case leftValue < rightValue:
             return -1
@@ -358,9 +314,9 @@ func comparePrereleaseIdentifier(left, right string) int {
             return 1
         }
         return 0
-    case leftNumeric && false == rightNumeric:
+    case true == leftNumeric && false == rightNumeric:
         return -1
-    case false == leftNumeric && rightNumeric:
+    case false == leftNumeric && true == rightNumeric:
         return 1
     }
 

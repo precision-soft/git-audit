@@ -21,9 +21,7 @@ const (
     flagApply = "apply"
     flagTag   = "tag"
 
-    /* the carriage return belongs here next to the space and the tab: replacing "\r\n" leaves a
-       lone "\r", and trimming only the space rebuilds a "\r\n" pair for the next pass to replace,
-       so the body never settles and sync reports the same release as out of date forever. */
+    /* without "\r" a lone carriage return rebuilds "\r\n" on each pass and the body never settles */
     lineTrailingWhitespace = " \t\r"
 )
 
@@ -118,6 +116,10 @@ func (instance *SyncCommand) Run(
     )
     envelope := output.NewEnvelope(meta)
 
+    if false == dryRun && true == githubClient.UsesPublicApi() && "" != repositoryUrl && false == isGithubRepositoryUrl(repositoryUrl) {
+        return fmt.Errorf("--apply needs a github.com --repo-url: releases are written to github, the changelog would come from elsewhere")
+    }
+
     var results []syncResult
     var diffs []syncDiff
     counts := map[string]int{"updated": 0, "would-update": 0, "up-to-date": 0, "missing": 0, "skipped": 0, "error": 0}
@@ -125,6 +127,12 @@ func (instance *SyncCommand) Run(
     for _, projectConfig := range filteredProjects {
         organization, repository := parseGithubUrl(projectConfig.GithubUrl)
         if "" == organization || "" == repository {
+            results = append(results, syncResult{
+                Repository: "--repo-url",
+                Status:     "error",
+                Message:    "could not read an owner and a repository from the url",
+            })
+            counts["error"]++
             continue
         }
 
@@ -172,7 +180,7 @@ func (instance *SyncCommand) Run(
 
             versions := listChangelogVersions(content)
             sort.SliceStable(versions, func(leftIndex, rightIndex int) bool {
-                return compareSemver(versions[leftIndex], versions[rightIndex]) < 0
+                return 0 > compareSemver(versions[leftIndex], versions[rightIndex])
             })
 
             for _, version := range versions {
@@ -250,7 +258,7 @@ func (instance *SyncCommand) Run(
                     continue
                 }
 
-                updateErr := githubClient.UpdateRelease(organization, repository, release.ID, foldedBody, desiredName)
+                updateErr := githubClient.UpdateRelease(organization, repository, release.Id, foldedBody, desiredName)
                 if nil != updateErr {
                     results = append(results, syncResult{
                         Repository: repository,
@@ -271,7 +279,7 @@ func (instance *SyncCommand) Run(
         }
     }
 
-    if option.Format == output.FormatTable {
+    if output.FormatTable == option.Format {
         builder := output.NewTableBuilder()
         mode := "apply"
         if true == dryRun {
@@ -279,7 +287,13 @@ func (instance *SyncCommand) Run(
         }
         builder.AddSummaryLine(fmt.Sprintf(
             "mode: %s | updated: %d | would-update: %d | up-to-date: %d | missing: %d | skipped: %d | errors: %d",
-            mode, counts["updated"], counts["would-update"], counts["up-to-date"], counts["missing"], counts["skipped"], counts["error"],
+            mode,
+            counts["updated"],
+            counts["would-update"],
+            counts["up-to-date"],
+            counts["missing"],
+            counts["skipped"],
+            counts["error"],
         ))
         if rateLimitLine := formatRateLimitLine(githubClient.RateLimit()); "" != rateLimitLine {
             builder.AddSummaryLine(rateLimitLine)
@@ -311,7 +325,7 @@ func (instance *SyncCommand) Run(
         return renderErr
     }
 
-    if option.Format == output.FormatTable && true == dryRun {
+    if output.FormatTable == option.Format && true == dryRun {
         printSyncDiffs(commandContext.Writer, diffs)
     }
 
@@ -358,27 +372,23 @@ func printSyncDiffs(writer io.Writer, diffs []syncDiff) {
     }
 }
 
-/*
-unifiedDiff returns a line-oriented diff between current and desired, prefixed with "- " removed,
-"+ " added, "  " context. LCS-based, sufficient for small release bodies.
-*/
 func unifiedDiff(current, desired string) string {
     currentLines := splitLinesForDiff(current)
     desiredLines := splitLinesForDiff(desired)
 
     rows, columns := len(currentLines), len(desiredLines)
-    lcs := make([][]int, rows+1)
-    for index := range lcs {
-        lcs[index] = make([]int, columns+1)
+    commonLengths := make([][]int, rows+1)
+    for index := range commonLengths {
+        commonLengths[index] = make([]int, columns+1)
     }
     for row := 1; row <= rows; row++ {
         for column := 1; column <= columns; column++ {
             if currentLines[row-1] == desiredLines[column-1] {
-                lcs[row][column] = lcs[row-1][column-1] + 1
-            } else if lcs[row-1][column] >= lcs[row][column-1] {
-                lcs[row][column] = lcs[row-1][column]
+                commonLengths[row][column] = commonLengths[row-1][column-1] + 1
+            } else if commonLengths[row-1][column] >= commonLengths[row][column-1] {
+                commonLengths[row][column] = commonLengths[row-1][column]
             } else {
-                lcs[row][column] = lcs[row][column-1]
+                commonLengths[row][column] = commonLengths[row][column-1]
             }
         }
     }
@@ -387,14 +397,14 @@ func unifiedDiff(current, desired string) string {
     row, column := rows, columns
     for 0 < row || 0 < column {
         switch {
-        case row > 0 && column > 0 && currentLines[row-1] == desiredLines[column-1]:
+        case 0 < row && 0 < column && currentLines[row-1] == desiredLines[column-1]:
             lines = append(lines, "  "+currentLines[row-1])
             row--
             column--
-        case column > 0 && (0 == row || lcs[row][column-1] >= lcs[row-1][column]):
+        case 0 < column && (0 == row || commonLengths[row][column-1] >= commonLengths[row-1][column]):
             lines = append(lines, "+ "+desiredLines[column-1])
             column--
-        case row > 0:
+        case 0 < row:
             lines = append(lines, "- "+currentLines[row-1])
             row--
         }
@@ -405,6 +415,10 @@ func unifiedDiff(current, desired string) string {
     }
 
     return strings.Join(lines, "\n")
+}
+
+func isGithubRepositoryUrl(repositoryUrl string) bool {
+    return true == strings.HasPrefix(service.NormalizeRepositoryUrl(repositoryUrl), "github.com/")
 }
 
 func splitLinesForDiff(text string) []string {
@@ -452,13 +466,7 @@ func listChangelogVersions(content string) []string {
     return versions
 }
 
-/*
-foldChangelogBody turns a changelog entry into a release body. The changelog nests its sections
-under the version heading, so they sit at h3; a release body has no version heading of its own, so
-they rise to h2 — the level the presentation audit reads. Section names pass through untouched: a
-"### Security" becomes "## Security", never "## Fixed". Headings inside a fenced code block are
-sample text and stay at the level the author wrote them.
-*/
+/* foldChangelogBody raises sections from h3 to h2 and keeps their names; headings inside a fence are sample text */
 func foldChangelogBody(body string) string {
     normalized := strings.ReplaceAll(body, "\r\n", "\n")
 
@@ -480,11 +488,7 @@ func foldChangelogBody(body string) string {
     return strings.Join(trimBlankEdgeLines(folded), "\n")
 }
 
-/*
-trimBlankEdgeLines drops the blank lines at both ends of a block without touching the indentation
-of the first line that carries content. Trimming the block as one string takes that indentation
-with it, and four leading columns are what tells an indented code block from a heading.
-*/
+/* trimming the block as one string would take the indent that marks an indented code block */
 func trimBlankEdgeLines(lines []string) []string {
     start := 0
     for start < len(lines) && "" == strings.TrimSpace(lines[start]) {

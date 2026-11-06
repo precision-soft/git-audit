@@ -398,3 +398,48 @@ func TestMarkdownHeading(t *testing.T) {
         }
     }
 }
+
+func TestExtractChangelogEntryStopsAtAPrereleaseHeading(t *testing.T) {
+    content := "## [v1.1.0] - 2026-02-01 - Final\n\n### Added\n\n- final\n\n" +
+        "## [v1.1.0-rc1] - 2026-01-01 - Candidate\n\n### Added\n\n- candidate\n\n" +
+        "## [v1.0.0] - 2025-01-01 - First\n\n### Added\n\n- first\n"
+
+    body, found := extractChangelogEntry(content, "v1.1.0")
+    if false == found {
+        t.Fatal("expected the entry")
+    }
+    if true == strings.Contains(body, "candidate") {
+        t.Errorf("the prerelease section must stay out of the entry, got %q", body)
+    }
+}
+
+func TestExtractChangelogEntryDoesNotReadABarePrereleaseAsTheRelease(t *testing.T) {
+    if body, found := extractChangelogEntry("## v1.1.0-rc1\n\n- candidate\n", "v1.1.0"); true == found {
+        t.Errorf("v1.1.0-rc1 is not v1.1.0, got %q", body)
+    }
+
+    body, found := extractChangelogEntry("## v1.1.0\n- first line\n", "v1.1.0")
+    if false == found || "- first line" != body {
+        t.Errorf("the line under a bare heading is the entry, got %q / %t", body, found)
+    }
+}
+
+func TestCodeFenceScannerIgnoresAnInfoStringAndAnIndentedFence(t *testing.T) {
+    var fence codeFenceScanner
+    for _, line := range []string{"```markdown", "```go", "## sample", "    ```"} {
+        if false == fence.inside(line) {
+            t.Errorf("%q must stay inside the block", line)
+        }
+    }
+    if false == fence.inside("```") {
+        t.Error("the closer belongs to the block")
+    }
+    if true == fence.inside("## section") {
+        t.Error("the block must be closed by now")
+    }
+
+    var indented codeFenceScanner
+    if true == indented.inside("    ```") || true == indented.inside("## section") {
+        t.Error("four columns make an indented code block, not a fence")
+    }
+}

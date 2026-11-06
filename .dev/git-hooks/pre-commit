@@ -33,6 +33,7 @@ fi
 FORBIDDEN_PATH_LIST_STRING="$(printf '%s\n' "${STAGED_PATH_LIST_STRING}" | awk '
     /^\.dev-data\// && $0 != ".dev-data/.gitignore" { print; next }
     $0 == ".dev/docker/.env.local" { print; next }
+    $0 == ".env.local" { print; next }
 ')"
 
 if [[ "" = "${FORBIDDEN_PATH_LIST_STRING}" ]]; then

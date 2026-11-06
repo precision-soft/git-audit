@@ -66,7 +66,7 @@ if [ -n "${BASH_VERSION:-}" ]; then
         git config --global init.defaultBranch master
         git config --global core.autocrlf input
         git config --global pull.rebase false
-        git config --global --add safe.directory /app/
+        git config --global --replace-all safe.directory /app/
     fi
 
     if [[ -f ~/.bash_aliases_local ]]; then

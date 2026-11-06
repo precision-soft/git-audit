@@ -38,7 +38,7 @@ func TestRegisterParametersDeclaresTheTokenAsACredential(t *testing.T) {
         t.Fatalf("only the two base urls may be registered in clear text, got %v", registrar.plain)
     }
 
-    expectedValue := "%env(" + EnvironmentGithubToken + ")%"
+    expectedValue := "%env(default::" + EnvironmentGithubToken + ")%"
 
     value, registered := registrar.secret[ParameterGithubToken]
 

@@ -53,7 +53,7 @@ func TestGetTagsRequestsTheConfiguredApiBase(t *testing.T) {
     if "/repos/acme/widget/tags" != requestedPath {
         t.Fatalf("expected the tags path on the configured base, got %q", requestedPath)
     }
-    if 1 != len(tags) || "v1.0.0" != tags[0].Name || "abc" != tags[0].CommitSHA {
+    if 1 != len(tags) || "v1.0.0" != tags[0].Name || "abc" != tags[0].CommitSha {
         t.Fatalf("unexpected tags: %#v", tags)
     }
 }
@@ -95,5 +95,61 @@ func TestGetReturnsTheStatusOfAFailedRequest(t *testing.T) {
     getErr := client.get(server.URL+"/missing", &destination)
     if nil == getErr || "http 404: {\"message\":\"Not Found\"}" != getErr.Error() {
         t.Fatalf("expected the http status in the error, got %v", getErr)
+    }
+}
+
+func TestCompareTagsEscapesTagsAndReplaysTheCache(t *testing.T) {
+    var requested []string
+    var revalidated []string
+    server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+        requested = append(requested, request.URL.EscapedPath())
+        if `"compare"` == request.Header.Get("If-None-Match") {
+            revalidated = append(revalidated, request.URL.EscapedPath())
+            writer.WriteHeader(http.StatusNotModified)
+            return
+        }
+        writer.Header().Set("ETag", `"compare"`)
+        writer.Write([]byte(`{"status":"ahead","total_commits":2}`))
+    }))
+    defer server.Close()
+
+    client := NewGithubClient("token")
+    client.SetEndpoints(server.URL, server.URL)
+    client.SetCacheDir(t.TempDir())
+
+    for attempt := 1; 2 >= attempt; attempt++ {
+        response, compareErr := client.CompareTags("acme", "widget", "v1.0.0", "v1.0.0#1")
+        if nil != compareErr {
+            t.Fatal(compareErr)
+        }
+        if 2 != response.TotalCommits {
+            t.Fatalf("attempt %d: expected 2 commits, got %d", attempt, response.TotalCommits)
+        }
+    }
+
+    if "/repos/acme/widget/compare/v1.0.0...v1.0.0%231" != requested[0] {
+        t.Errorf("the tag must be escaped, got %s", requested[0])
+    }
+    if 1 != len(revalidated) {
+        t.Errorf("the second compare must revalidate the cached response, got %d", len(revalidated))
+    }
+}
+
+func TestGetFileContentAtRefEscapesThePathAndKeepsItsSeparators(t *testing.T) {
+    var requested string
+    server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+        requested = request.URL.EscapedPath()
+        writer.Write([]byte("content"))
+    }))
+    defer server.Close()
+
+    client := NewGithubClient("")
+    client.SetEndpoints(server.URL, server.URL)
+
+    if _, fetchErr := client.GetFileContentAtRef("acme", "widget", "docs/change#log.md", "HEAD"); nil != fetchErr {
+        t.Fatal(fetchErr)
+    }
+    if "/acme/widget/HEAD/docs/change%23log.md" != requested {
+        t.Errorf("unexpected path %s", requested)
     }
 }

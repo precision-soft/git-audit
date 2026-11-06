@@ -7,13 +7,6 @@ import (
 
 const ServiceGithubRelease = "git-audit.github-release"
 
-type GithubReleaseService struct {
-    token   string
-    apiBase string
-    rawBase string
-    client  *GithubClient
-}
-
 func NewGithubReleaseService(token, apiBase, rawBase string) *GithubReleaseService {
     instance := &GithubReleaseService{
         token:   token,
@@ -23,6 +16,13 @@ func NewGithubReleaseService(token, apiBase, rawBase string) *GithubReleaseServi
     instance.client = instance.NewClientWithToken(token)
 
     return instance
+}
+
+type GithubReleaseService struct {
+    token   string
+    apiBase string
+    rawBase string
+    client  *GithubClient
 }
 
 func (instance *GithubReleaseService) Token() string {

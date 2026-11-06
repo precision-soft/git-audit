@@ -24,7 +24,7 @@ func readCachedResponse(directory, urlString string) *cachedResponse {
         return nil
     }
     var cached cachedResponse
-    if decodeErr := json.Unmarshal(cachedData, &cached); nil != decodeErr {
+    if decodeErr := json.Unmarshal(cachedData, &cached); nil != decodeErr || 0 == len(cached.Body) {
         return nil
     }
     return &cached

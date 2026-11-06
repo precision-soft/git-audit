@@ -54,3 +54,25 @@ func TestValidateManifestProjectRequiresOwnerAndRepository(t *testing.T) {
         t.Errorf("an owner/repository url must pass, got %v", validateErr)
     }
 }
+
+func TestProjectManifestTreatsTheGitSuffixAsTheSameRepository(t *testing.T) {
+    path := writeManifest(t, `{"mode":"merge","projects":[{"name":"Other","githubUrl":"https://github.com/acme/widget.git"}]}`)
+    _, loadErr := loadProjectManifest(path, []project.ProjectConfig{{Name: "Widget", GithubUrl: "https://github.com/acme/widget"}})
+    if nil == loadErr || false == strings.Contains(loadErr.Error(), "duplicate project url") {
+        t.Fatalf("expected a duplicate, got %v", loadErr)
+    }
+}
+
+func TestProjectManifestRejectsADeepUrl(t *testing.T) {
+    path := writeManifest(t, `{"mode":"replace","projects":[{"name":"Deep","githubUrl":"https://github.com/acme/widget/tree/main"}]}`)
+    if _, loadErr := loadProjectManifest(path, nil); nil == loadErr {
+        t.Fatal("expected a url deeper than owner/repository to be refused")
+    }
+}
+
+func TestProjectManifestRejectsTrailingContent(t *testing.T) {
+    path := writeManifest(t, `{"mode":"replace","projects":[]}{"mode":"merge"}`)
+    if _, loadErr := loadProjectManifest(path, nil); nil == loadErr {
+        t.Fatal("expected a second document to be refused")
+    }
+}

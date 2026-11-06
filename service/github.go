@@ -28,7 +28,7 @@ type RateLimitInfo struct {
 
 type GithubTag struct {
     Name      string `json:"name"`
-    CommitSHA string `json:"commitSha"`
+    CommitSha string `json:"commitSha"`
 }
 
 type GithubAsset struct {
@@ -37,7 +37,7 @@ type GithubAsset struct {
 }
 
 type GithubRelease struct {
-    ID              int64         `json:"id"`
+    Id              int64         `json:"id"`
     TagName         string        `json:"tag_name"`
     Name            string        `json:"name"`
     Body            string        `json:"body"`
@@ -52,17 +52,10 @@ type CompareFile struct {
     Status   string `json:"status"`
 }
 
-type CompareCommit struct {
-    SHA string `json:"sha"`
-}
-
 type CompareResponse struct {
-    Status       string          `json:"status"`
-    AheadBy      int             `json:"ahead_by"`
-    BehindBy     int             `json:"behind_by"`
-    TotalCommits int             `json:"total_commits"`
-    Commits      []CompareCommit `json:"commits"`
-    Files        []CompareFile   `json:"files"`
+    Status       string        `json:"status"`
+    TotalCommits int           `json:"total_commits"`
+    Files        []CompareFile `json:"files"`
 }
 
 func newHttpStatusError(response httpclientcontract.Response) *HttpStatusError {
@@ -81,29 +74,29 @@ func (instance *HttpStatusError) Error() string {
     return fmt.Sprintf("http %d: %s", instance.StatusCode, instance.Body)
 }
 
-type GithubClient struct {
-    token        string
-    httpClient   httpclientcontract.Client
-    rateLimit    RateLimitInfo
-    rateLimitMux sync.Mutex
-    cacheDir     string
-    apiBase      string
-    rawBase      string
-}
-
-func githubApiHeaders() map[string]string {
-    return map[string]string{
-        "Accept":               "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
-}
-
 func NewGithubClient(token string) *GithubClient {
     return &GithubClient{
         token:      token,
         httpClient: newHttpClient(),
         apiBase:    githubApiBase,
         rawBase:    githubRawBase,
+    }
+}
+
+type GithubClient struct {
+    token          string
+    httpClient     httpclientcontract.Client
+    rateLimit      RateLimitInfo
+    rateLimitMutex sync.Mutex
+    cacheDir       string
+    apiBase        string
+    rawBase        string
+}
+
+func githubApiHeaders() map[string]string {
+    return map[string]string{
+        "Accept":               "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
     }
 }
 
@@ -123,16 +116,18 @@ func (instance *GithubClient) SetEndpoints(apiBase, rawBase string) {
     }
 }
 
+/* a test double or an enterprise host sets its own base, and then the repo url's host says nothing about the api */
+func (instance *GithubClient) UsesPublicApi() bool {
+    return githubApiBase == instance.apiBase
+}
+
 func (instance *GithubClient) RateLimit() RateLimitInfo {
-    instance.rateLimitMux.Lock()
-    defer instance.rateLimitMux.Unlock()
+    instance.rateLimitMutex.Lock()
+    defer instance.rateLimitMutex.Unlock()
     return instance.rateLimit
 }
 
-/*
-recordRateLimit keeps the minimum Remaining seen across all responses, which is peak usage: a
-last-wins value overstates the headroom left.
-*/
+/* the minimum seen is peak usage: last-wins would overstate the headroom */
 func (instance *GithubClient) recordRateLimit(response httpclientcontract.Response) {
     headers := response.Headers()
     limit := headers.Get("X-RateLimit-Limit")
@@ -156,8 +151,8 @@ func (instance *GithubClient) recordRateLimit(response httpclientcontract.Respon
     }
     info.Resource = headers.Get("X-RateLimit-Resource")
 
-    instance.rateLimitMux.Lock()
-    defer instance.rateLimitMux.Unlock()
+    instance.rateLimitMutex.Lock()
+    defer instance.rateLimitMutex.Unlock()
 
     if false == instance.rateLimit.HasData || info.Remaining < instance.rateLimit.Remaining {
         instance.rateLimit = info
@@ -167,7 +162,7 @@ func (instance *GithubClient) recordRateLimit(response httpclientcontract.Respon
 type githubTagApiResponse struct {
     Name   string `json:"name"`
     Commit struct {
-        SHA string `json:"sha"`
+        Sha string `json:"sha"`
     } `json:"commit"`
 }
 
@@ -185,7 +180,7 @@ func (instance *GithubClient) GetTags(organization, repository string) ([]Github
         for _, responseItem := range batch {
             all = append(all, GithubTag{
                 Name:      responseItem.Name,
-                CommitSHA: responseItem.Commit.SHA,
+                CommitSha: responseItem.Commit.Sha,
             })
         }
 
@@ -218,14 +213,14 @@ func (instance *GithubClient) GetReleases(organization, repository string) ([]Gi
     return all, nil
 }
 
-func (instance *GithubClient) GetFileContentAtRef(organization, repository, path, ref string) (string, error) {
+func (instance *GithubClient) GetFileContentAtRef(organization, repository, path, reference string) (string, error) {
     endpoint := fmt.Sprintf(
         "%s/%s/%s/%s/%s",
         instance.rawBase,
         organization,
         repository,
-        ref,
-        path,
+        escapePathSegments(reference),
+        escapePathSegments(path),
     )
 
     var options []httpclientcontract.RequestOption
@@ -251,31 +246,13 @@ func (instance *GithubClient) CompareTags(organization, repository, base, head s
         instance.apiBase,
         organization,
         repository,
-        base,
-        head,
+        escapePathSegments(base),
+        escapePathSegments(head),
     )
 
-    options := []httpclientcontract.RequestOption{
-        httpclient.WithHeaders(githubApiHeaders()),
-    }
-    if "" != strings.TrimSpace(instance.token) {
-        options = append(options, httpclient.WithBearerToken(instance.token))
-    }
-
-    response, requestErr := requestWithRetry(instance.httpClient, http.MethodGet, endpoint, options...)
-    if nil != requestErr {
-        return nil, requestErr
-    }
-
-    instance.recordRateLimit(response)
-
-    if http.StatusOK != response.StatusCode() {
-        return nil, newHttpStatusError(response)
-    }
-
     var compareResponse CompareResponse
-    if decodeErr := json.Unmarshal(response.Body(), &compareResponse); nil != decodeErr {
-        return nil, fmt.Errorf("parse compare response for %s/%s %s...%s: %w", organization, repository, base, head, decodeErr)
+    if getErr := instance.get(endpoint, &compareResponse); nil != getErr {
+        return nil, getErr
     }
 
     return &compareResponse, nil
@@ -295,10 +272,7 @@ func (instance *GithubClient) UpdateRelease(organization, repository string, rel
 
     options := []httpclientcontract.RequestOption{
         httpclient.WithJson(payload),
-        httpclient.WithHeaders(map[string]string{
-            "Accept":               "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-        }),
+        httpclient.WithHeaders(githubApiHeaders()),
         httpclient.WithBearerToken(instance.token),
     }
 

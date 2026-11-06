@@ -14,15 +14,9 @@ const (
     EnvironmentGithubRawBase = "GITHUB_RAW_BASE"
 )
 
-/*
-RegisterParameters declares the GitHub token as a credential, so melody's auto-registered
-`debug:parameters` renders it redacted instead of in clear text. Both spellings have to be covered
-and they are secret independently: ParameterGithubToken is this module's own, EnvironmentGithubToken
-is the one melody registers itself from the .env artifacts, and each resolves to the same token.
-The two base URLs are plain and optional: unset, the client keeps the public GitHub hosts.
-*/
+/* melody's debug:parameters prints resolved values, and each spelling of the token is secret independently */
 func (instance *GithubAuditModule) RegisterParameters(registrar applicationcontract.ParameterRegistrar) {
-    registrar.RegisterSecretParameter(ParameterGithubToken, "%env("+EnvironmentGithubToken+")%")
+    registrar.RegisterSecretParameter(ParameterGithubToken, "%env(default::"+EnvironmentGithubToken+")%")
     registrar.MarkParameterSecret(EnvironmentGithubToken)
     registrar.RegisterParameter(ParameterGithubApiBase, "%env(default::"+EnvironmentGithubApiBase+")%")
     registrar.RegisterParameter(ParameterGithubRawBase, "%env(default::"+EnvironmentGithubRawBase+")%")

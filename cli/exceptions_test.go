@@ -2,6 +2,8 @@ package cli
 
 import (
     "fmt"
+    "os"
+    "path/filepath"
     "reflect"
     "testing"
     "time"
@@ -156,5 +158,92 @@ func TestRecomputeProjectAggregatesKeepsAFetchErrorAudit(t *testing.T) {
 
     if false == reflect.DeepEqual(expected, audit) {
         t.Fatalf("a fetch-error audit has nothing to aggregate and must stay as built, got %#v", audit)
+    }
+}
+
+func TestExceptionEntryStaysActiveThroughItsReviewDate(t *testing.T) {
+    entry := ExceptionEntry{Issue: "something", ReviewedUntil: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)}
+
+    if false == entry.Active(time.Date(2026, 7, 1, 13, 0, 0, 0, time.UTC)) {
+        t.Error("the named day is still covered at midday")
+    }
+    if true == entry.Active(time.Date(2026, 7, 2, 0, 0, 0, 0, time.UTC)) {
+        t.Error("the next day is not")
+    }
+}
+
+func TestAcceptingAnExpiredExceptionRenewsIt(t *testing.T) {
+    expired := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+    exceptions := Exceptions{"acme/widget": {"v1.0.0": {"diff": {{Issue: "something", ReviewedUntil: expired}}}}}
+
+    exceptions.add("acme/widget", "v1.0.0", "diff", "something")
+
+    entries := exceptions["acme/widget"]["v1.0.0"]["diff"]
+    if 1 != len(entries) || false == entries[0].ReviewedUntil.IsZero() {
+        t.Fatalf("expected the single entry renewed, got %#v", entries)
+    }
+    if false == exceptions.has("acme/widget", "v1.0.0", "diff", "something", time.Now()) {
+        t.Error("the accepted warning must not come back")
+    }
+}
+
+func TestLoadExceptionsTreatsNullAsEmptyAndAcceptsANewEntry(t *testing.T) {
+    path := filepath.Join(t.TempDir(), "exceptions.json")
+    if writeErr := os.WriteFile(path, []byte("null"), 0o644); nil != writeErr {
+        t.Fatal(writeErr)
+    }
+
+    exceptions, loadErr := loadExceptions(path)
+    if nil != loadErr {
+        t.Fatal(loadErr)
+    }
+
+    exceptions.add("acme/widget", "v1.0.0", "diff", "something")
+}
+
+func TestSaveExceptionsReplacesTheFileAndLeavesNoTemporary(t *testing.T) {
+    directory := t.TempDir()
+    path := filepath.Join(directory, "exceptions.json")
+    if writeErr := os.WriteFile(path, []byte("{}"), 0o644); nil != writeErr {
+        t.Fatal(writeErr)
+    }
+
+    exceptions := make(Exceptions)
+    exceptions.add("acme/widget", "v1.0.0", "diff", "something")
+    if saveErr := saveExceptions(path, exceptions); nil != saveErr {
+        t.Fatal(saveErr)
+    }
+
+    reloaded, loadErr := loadExceptions(path)
+    if nil != loadErr {
+        t.Fatal(loadErr)
+    }
+    if false == reloaded.has("acme/widget", "v1.0.0", "diff", "something", time.Now()) {
+        t.Error("expected the saved entry back")
+    }
+
+    entries, readErr := os.ReadDir(directory)
+    if nil != readErr || 1 != len(entries) {
+        t.Errorf("expected only the exceptions file, got %v / %v", entries, readErr)
+    }
+    info, statErr := os.Stat(path)
+    if nil != statErr || 0o644 != info.Mode().Perm() {
+        t.Errorf("expected mode 0644, got %v / %v", info, statErr)
+    }
+}
+
+func TestRecomputedAggregatesKeepTheChangelogNotApplicable(t *testing.T) {
+    audit := types.ProjectAudit{
+        Releases: []types.ReleaseAudit{{
+            TagName:   "v1.0.0",
+            Integrity: types.LevelResult{Status: types.LevelOk},
+            Changelog: types.LevelResult{Status: types.LevelNotApplicable},
+        }},
+    }
+
+    recomputeProjectAggregates(&audit)
+
+    if types.LevelNotApplicable != audit.ChangelogStatus {
+        t.Errorf("expected n/a, got %s", audit.ChangelogStatus)
     }
 }

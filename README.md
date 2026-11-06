@@ -12,7 +12,7 @@ Works with **any GitHub repo** — public or private, yours or someone else's. S
 
 ## Features
 
-- **Per-release audit** with five independent checks (see [Audit rules](#audit-rules)).
+- **Per-release audit** with six independent checks (see [Audit rules](#audit-rules)).
 - **Changelog → release body sync** with dry-run diffs; only writes when you pass `--apply`.
 - **Automatic local clones** under `.dev-data/clones/<repo>/` — clones on first use, hard-resets to origin on every subsequent run (scratch space, not a workspace).
 - **SSH and HTTPS** clone URLs both work — private repos use whatever your `git` + SSH agent are configured to use.
@@ -22,9 +22,9 @@ Works with **any GitHub repo** — public or private, yours or someone else's. S
 
 ## Requirements
 
-- Go 1.24+
+- Go 1.26+
 - `git` on `$PATH`
-- GitHub token with `Contents: Read & write` on target repos (via `--token`, config file, or `GITHUB_TOKEN` env)
+- GitHub token with `Contents: Read & write` on target repos (via `--token`, or `GITHUB_TOKEN` in `.env.local`)
 - For private repos: SSH key configured in your git agent (same setup `git clone git@github.com:...` uses)
 
 ## Installation
@@ -38,8 +38,17 @@ Or build from source:
 ```bash
 git clone https://github.com/precision-soft/git-audit
 cd git-audit
-go build -o git-audit ./...
+go build -o git-audit .
 ```
+
+After `go install`, the Go binary directory must be on your `PATH`. The binary reads its configuration from the directory it sits in, and `go install` copies only the binary, so put both the repository's [`.env`](./.env) and the `.env.local` below next to it; that directory must also be writable, because the logs go to `var/` there. Without the `.env` the binary starts as an http server instead of a command line tool:
+
+```bash
+cd "$(dirname "$(command -v git-audit)")"
+curl -fsSL https://raw.githubusercontent.com/precision-soft/git-audit/main/.env -o .env
+```
+
+After a source build, run `./git-audit` from the checkout instead. The dev container runs as root, so once it has run, `var/` and `.dev-data/clones/` in the checkout belong to root: keep using `go run .` inside the container, or take them back with `sudo chown -R "$(id -u):$(id -g)" var .dev-data/clones` before running on the host.
 
 ## Configuration
 
@@ -53,7 +62,16 @@ GITHUB_API_BASE=https://api.github.com
 GITHUB_RAW_BASE=https://raw.githubusercontent.com
 ```
 
-Precedence for the token: `--token` flag > `github.token` in the melody config > `GITHUB_TOKEN` env.
+To create the token, either:
+
+- generate a [fine-grained personal access token](https://github.com/settings/personal-access-tokens/new) limited to the target repositories, with `Contents: Read & write`, and paste it in `.env.local`, or
+- reuse the GitHub CLI login, whose token reaches everything that account can reach. From the directory that holds the `.env` files:
+
+  ```bash
+  (umask 077; token="$(gh auth token)" && printf 'GITHUB_TOKEN=%s\n' "${token}" >> .env.local)
+  ```
+
+Precedence for the token: `--token` flag > `GITHUB_TOKEN` from `.env.local` / `.env`. The token is optional at boot: `exceptions` runs without one, while `audit` and `sync` stop with `github token required` when neither source provides it.
 
 The token is registered as a **secret** parameter, so `debug:parameters` renders it as `********` instead of in clear text — under both the `github.token` name and the `GITHUB_TOKEN` key melody registers from the `.env` artifacts.
 
@@ -70,17 +88,17 @@ The token is registered as a **secret** parameter, so `debug:parameters` renders
 ### audit
 
 ```bash
-go run . audit [--token TOKEN] [--repo NAME] [--repo-url URL] [--fail-on-warning] [--exceptions PATH] [--config PATH] [--concurrency N] [--github-annotations] [--cache-dir PATH] [--supply-chain LIST] [--supply-chain-fail]
+git-audit audit [--token TOKEN] [--repo NAME] [--repo-url URL] [--fail-on-warning] [--exceptions PATH] [--config PATH] [--concurrency N] [--github-annotations] [--cache-dir PATH] [--supply-chain LIST] [--supply-chain-fail]
 ```
 
 | Flag                   | Meaning                                                                                                                                                                                                                                                                                                                                       |
 |------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `--token TOKEN`        | GitHub token; overrides melody `github.token` / `GITHUB_TOKEN` env.                                                                                                                                                                                                                                                                           |
+| `--token TOKEN`        | GitHub token; overrides `GITHUB_TOKEN` from `.env.local` / `.env`.                                                                                                                                                                                                                                                                            |
 | `--repo NAME`          | Filter by repo name; pass a comma-separated list for multiple repos (e.g. `doctrine-type` or `doctrine-type,doctrine-utility`).                                                                                                                                                                                                               |
 | `--repo-url URL`       | GitHub URL for an ad-hoc repo not in the built-in project list (required when `--repo` doesn't match a known project; only valid with a single `--repo` value). Accepts HTTPS (`https://github.com/org/repo`) or SSH (`git@github.com:org/repo.git`). Ad-hoc repos default to no Packagist, a single `CHANGELOG.md`, and `GoSubmodule=false`. |
 | `--fail-on-warning`    | Exit 1 on warnings, not only on failures.                                                                                                                                                                                                                                                                                                     |
 | `--exceptions PATH`    | JSON file of accepted issues (default `exceptions.json`). TTY prompts to add unacknowledged warnings.                                                                                                                                                                                                                                         |
-| `--config PATH`        | JSON project manifest `{ "mode": "merge                                                                                                                                                                                                                                                                                                       |
+| `--config PATH`        | JSON project manifest `{ "mode": "merge\|replace", "projects": [...] }` (see [External project manifests and CI output](#external-project-manifests-and-ci-output)). |
 | `--concurrency N`      | Projects audited at a time, 1 to 32 (default 4).                                                                                                                                                                                                                                                                                              |
 | `--github-annotations` | Write one `::warning` / `::error` workflow command per issue to stderr; stdout stays the plain document, so `--format json` remains parseable in a GitHub Actions step.                                                                                                                                                                       |
 | `--cache-dir PATH`     | Cache GitHub responses by `ETag` under `PATH` (off unless set; nothing is written to the working directory otherwise). A cache that cannot be read or written is a miss, never a failure.                                                                                                                                                     |
@@ -102,7 +120,7 @@ Projects are audited in parallel (`--concurrency`, 4 by default). The summary bl
 ### sync
 
 ```bash
-go run . sync [--token TOKEN] [--repo NAME] [--repo-url URL] [--apply]
+git-audit sync [--token TOKEN] [--repo NAME] [--repo-url URL] [--tag TAG] [--apply]
 ```
 
 **Default is dry-run** — reports `would-update` per tag and prints a unified diff (`+ added / - removed`) below the summary table. Pass `--apply` to actually PATCH release bodies.
@@ -111,10 +129,11 @@ go run . sync [--token TOKEN] [--repo NAME] [--repo-url URL] [--apply]
 |------------------|----------------------------------------------------------------------------------------------------------------------|
 | `--token TOKEN`  | GitHub token (required to list releases; also to PATCH when `--apply`).                                              |
 | `--repo NAME`    | Restrict to one repo, or a comma-separated list of repos (e.g. `doctrine-type` or `doctrine-type,doctrine-utility`). |
-| `--repo-url URL` | GitHub URL for an ad-hoc repo. Same format as `audit` — HTTPS or SSH; only valid with a single `--repo` value.       |
+| `--repo-url URL` | GitHub URL for an ad-hoc repo. Same format as `audit` — HTTPS or SSH; only valid with a single `--repo` value. With `--apply` it must point at `github.com`, unless `GITHUB_API_BASE` names another host. A URL carrying credentials is refused. |
+| `--tag TAG`      | Restrict to one tag (e.g. `v3.4.1`), to try `sync` on a single release first.                                         |
 | `--apply`        | Actually PATCH release bodies. Without this flag, `sync` runs as dry-run (no API writes).                            |
 
-**Local clones are managed automatically.** Before reading the changelog for each repo, `sync` ensures `.dev-data/clones/<repo>/` exists and is in sync with origin:
+**Local clones are managed automatically.** Before reading the changelog for each repo, `sync` ensures `.dev-data/clones/<repo>/`, relative to the working directory, exists and is in sync with origin. A directory there that is not a clone of its own, or a clone of another repository, stops that repo with an error instead of being reset:
 
 - If missing → `git clone <GithubUrl> .dev-data/clones/<repo>`.
 - If present → `git fetch --tags --prune && git checkout <default-branch> && git reset --hard origin/<default-branch> && git clean -fdx`. **Any local changes in that clone are discarded** — these clones are treated as scratch space.
@@ -123,14 +142,14 @@ For unknown repos, the URL comes from `--repo-url`. For known repos, it comes fr
 
 For each `## [vX.Y.Z]` section in the changelog:
 
-1. Extracts the entry body; normalizes `### Security` → `## Fixed`, `### Removed` → `## Changed`, promotes other `### ` headings to `## `.
+1. Extracts the entry body and promotes its `### ` headings to `## `, keeping the section names.
 2. Compares (CRLF-normalized, blank-run-collapsed, trailing-whitespace-stripped) against the current GitHub release body.
 3. If different and not dry-run, `PATCH /repos/:owner/:repo/releases/:id` with the folded body.
 
 ### exceptions
 
 ```bash
-go run . exceptions [--exceptions PATH]
+git-audit exceptions [--exceptions PATH]
 ```
 
 Lists entries grouped by repo — `version`, `level`, `issue`, `reviewed_until` (with `(expired)` past due). Expired entries are ignored by `audit` so the warnings resurface.
@@ -161,12 +180,12 @@ Two supported modes for pointing git-audit at a repo:
 
 ```bash
 # Public repo — HTTPS
-go run . audit --repo my-lib --repo-url https://github.com/my-org/my-lib
-go run . sync  --repo my-lib --repo-url https://github.com/my-org/my-lib --apply
+git-audit audit --repo my-lib --repo-url https://github.com/my-org/my-lib
+git-audit sync  --repo my-lib --repo-url https://github.com/my-org/my-lib --apply
 
 # Private repo — SSH
-go run . audit --repo secret-svc --repo-url git@github.com:my-org/secret-svc.git
-go run . sync  --repo secret-svc --repo-url git@github.com:my-org/secret-svc.git --apply
+git-audit audit --repo secret-svc --repo-url git@github.com:my-org/secret-svc.git
+git-audit sync  --repo secret-svc --repo-url git@github.com:my-org/secret-svc.git --apply
 ```
 
 Ad-hoc repos default to: no Packagist check, a single `CHANGELOG.md` at the repo root, and no Go submodule filtering.
@@ -177,13 +196,15 @@ Fork, then edit `config/project/project.go` and add an entry:
 
 ```go
 {
-Name:         "My Service",
-GithubUrl:    "git@github.com:my-org/my-service.git", // or HTTPS
-PackagistUrl: "", // optional
-GoSubmodule:  false,
-ChangelogPaths: []string{"CHANGELOG.md"}, // omit for the default
+    Name:           "My Service",
+    GithubUrl:      "git@github.com:my-org/my-service.git",
+    PackagistUrl:   "",
+    GoSubmodule:    false,
+    ChangelogPaths: []string{"CHANGELOG.md"},
 },
 ```
+
+`GithubUrl` takes HTTPS or SSH; `PackagistUrl` is optional, and `ChangelogPaths` defaults to `CHANGELOG.md`.
 
 The `Name` field is used in presentation checks (title must match `<Name> vX.Y.Z - <Summary>`); if omitted, git-audit derives it from the repo slug.
 
@@ -204,11 +225,11 @@ Bulk-clone all known projects up front (optional, for warm cache):
 
 ## Output formats
 
-Inherits melody's standard flags: `--format=json`, `--format=table` (default), `--limit`, `--offset`, debug flags. When available, rate-limit info is printed as a summary line on tables.
+Inherits melody's standard flags: `--format=json`, `--format=table` (default), debug flags. `--limit` and `--offset` window the projects in `audit --format=json`; tables and `sync` always return everything. When available, rate-limit info is printed as a summary line on tables.
 
 ## Resilience
 
-`service/http_retry.go` centralizes HTTP behavior: 30s timeout, 3 attempts with exponential backoff (500ms initial) on 5xx/429, bodies rewound via `GetBody`. Both GitHub and Packagist use this client. Rate-limit tracking keeps **minimum** `Remaining` seen across calls (= peak usage), not last-wins.
+`service/http_retry.go` centralizes HTTP behavior: 30s timeout, 3 attempts with exponential backoff (500ms initial) on 5xx/429, waiting for `Retry-After` when the response sends one (30s at most). Both GitHub and Packagist use this client. Rate-limit tracking keeps **minimum** `Remaining` seen across calls (= peak usage), not last-wins.
 
 ## Layout
 
@@ -328,6 +349,6 @@ Omitting `--repo` entirely is equivalent — it targets every project in `config
 
 `--github-annotations` writes one workflow command per issue to stderr (`::warning title=<org>/<repo> <tag> <level>::<issue>`, `::error` for a failed level), in a fixed level order, with only the title escaped as a property; stdout stays the document, so `--format json` is still parseable in the same step. melody's boot log also lands on stderr as json lines, which the runner ignores.
 
-`--cache-dir PATH` keeps GitHub responses by `ETag` and revalidates them with `If-None-Match`; entries are written atomically with mode `0600`. It is off unless set, and a cache that cannot be read or written costs nothing but the cache. The key is the URL alone: an entity tag is only ever offered, and GitHub answers a caller that may not see a resource with 404, never with 304.
+`--cache-dir PATH` keeps GitHub API responses by `ETag` and revalidates them with `If-None-Match`; entries are written atomically with mode `0600`. It is off unless set, and a cache that cannot be read or written costs nothing but the cache. The key is the URL alone: an entity tag is only ever offered, and GitHub answers a caller that may not see a resource with 404, never with 304.
 
-Supply-chain checks are opt-in through `--supply-chain signed-tags,checksums,sbom,attestations` or `all`. They run after the main pass, project by project: a release without a signed tag, a checksum asset, an SBOM asset or a verified artifact attestation carries one issue per missing item on its `supply-chain` level, and a project whose GitHub calls fail carries that failure on the same level instead of aborting the audit. Findings are warnings unless `--supply-chain-fail` is set, in which case they fail the release and the project like any other level.
+Supply-chain checks are opt-in through `--supply-chain signed-tags,checksums,sbom,attestations` or `all`. They run after the main pass, project by project: a release without a signed tag, a checksum asset, an SBOM asset or a GitHub artifact attestation carries one issue per missing item on its `supply-chain` level, and a project whose GitHub calls fail carries that failure on the same level instead of aborting the audit. Findings are warnings unless `--supply-chain-fail` is set, in which case they fail the release and the project like any other level.

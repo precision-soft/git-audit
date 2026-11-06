@@ -23,11 +23,7 @@ var assetRequirements = []assetRequirement{
     {check: "sbom", markers: []string{"sbom", "spdx", "cyclonedx"}},
 }
 
-/*
-applySupplyChainAudits runs the opt-in checks after the main pass and never aborts the command:
-a project whose GitHub calls fail keeps the audit it already has and carries the failure on its
-supply-chain level, the same way the main pass records a fetch error instead of exiting.
-*/
+/* a project whose calls fail carries the failure on its supply-chain level, as the main pass does with a fetch error */
 func applySupplyChainAudits(githubClient *service.GithubClient, audits []types.ProjectAudit, requestedChecks string, failOnFinding bool) error {
     checks, parseErr := parseSupplyChainChecks(requestedChecks)
     if nil != parseErr || 0 == len(checks) {
@@ -101,10 +97,10 @@ func auditReleaseSupplyChain(
         hasAttestation := false
         var attestationErr error
         for _, asset := range release.Assets {
-            var verified bool
-            verified, attestationErr = githubClient.HasArtifactAttestation(audit.OrganizationName, audit.RepositoryName, asset.Digest)
-            if nil != attestationErr || true == verified {
-                hasAttestation = verified
+            var attested bool
+            attested, attestationErr = githubClient.HasArtifactAttestation(audit.OrganizationName, audit.RepositoryName, asset.Digest)
+            if nil != attestationErr || true == attested {
+                hasAttestation = attested
                 break
             }
         }
@@ -112,7 +108,7 @@ func auditReleaseSupplyChain(
         case nil != attestationErr:
             addIssue(supplyChainUnavailable + attestationErr.Error())
         case false == hasAttestation:
-            addIssue("release has no verified github artifact attestation")
+            addIssue("release has no github artifact attestation")
         }
     }
     return result

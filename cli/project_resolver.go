@@ -9,12 +9,6 @@ import (
 
 const flagRepoUrl = "repo-url"
 
-/*
-resolveTargetProjects applies the --repo / --repo-url flag pair against the built-in project list.
---repo takes a comma-separated list of repo names and --repo-url only applies to a single one of
-them: a name that is not in the list is audited ad hoc from that URL, and a name that is in it
-cannot have its URL overridden.
-*/
 func resolveTargetProjects(repositoryFilter, repositoryUrl string) ([]project.ProjectConfig, error) {
     return resolveTargetProjectsFrom(project.Projects, repositoryFilter, repositoryUrl)
 }
@@ -60,7 +54,8 @@ func resolveSingleRepoFilterFrom(available []project.ProjectConfig, repositoryFi
         if "" != repositoryUrl && repositoryUrl != filtered[0].GithubUrl {
             return nil, fmt.Errorf(
                 "--repo %q is a known project (%s); remove --repo-url or pick a different --repo name",
-                repositoryFilter, filtered[0].GithubUrl,
+                repositoryFilter,
+                filtered[0].GithubUrl,
             )
         }
         return filtered, nil
@@ -69,7 +64,8 @@ func resolveSingleRepoFilterFrom(available []project.ProjectConfig, repositoryFi
     if "" == repositoryUrl {
         return nil, fmt.Errorf(
             "unknown repo %q; pass --repo-url https://github.com/<org>/%s to clone it on the fly",
-            repositoryFilter, repositoryFilter,
+            repositoryFilter,
+            repositoryFilter,
         )
     }
     return []project.ProjectConfig{{GithubUrl: repositoryUrl}}, nil

@@ -280,3 +280,19 @@ func TestCompareReleaseBodyIgnoresLineEndingNoise(t *testing.T) {
         t.Error("expected bodies differing only in line endings and trailing whitespace to compare equal")
     }
 }
+
+func TestIsGithubRepositoryUrl(t *testing.T) {
+    cases := map[string]bool{
+        "https://github.com/acme/widget":      true,
+        "git@github.com:acme/widget.git":      true,
+        "ssh://git@github.com/acme/widget":    true,
+        "https://gitlab.com/acme/widget":      false,
+        "https://github.com.evil/acme/widget": false,
+        "file:///tmp/acme/widget":             false,
+    }
+    for repositoryUrl, want := range cases {
+        if got := isGithubRepositoryUrl(repositoryUrl); want != got {
+            t.Errorf("%s: expected %t, got %t", repositoryUrl, want, got)
+        }
+    }
+}

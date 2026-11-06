@@ -3,6 +3,7 @@ package cli
 import (
     "fmt"
     "io"
+    "net/http"
     "regexp"
     "sort"
     "strings"
@@ -35,15 +36,13 @@ const (
 var (
     versionRegex                = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
     titlePartsRegex             = regexp.MustCompile(`^(.+?)\s+(v\d+\.\d+\.\d+)\s+-\s+(.+)$`)
-    changelogDatedTitledHeading = regexp.MustCompile(`(?m)^##\s+\[(v\d+\.\d+\.\d+)\]\s+-\s+(\d{4}-\d{2}-\d{2})\s+-\s+(.+?)\s*$`)
-    changelogDatedHeading       = regexp.MustCompile(`(?m)^##\s+\[(v\d+\.\d+\.\d+)\]\s+-\s+(\d{4}-\d{2}-\d{2})\s*$`)
+    changelogDatedTitledHeading = regexp.MustCompile(`(?m)^##[ \t]+\[(v\d+\.\d+\.\d+)\][ \t]+-[ \t]+(\d{4}-\d{2}-\d{2})[ \t]+-[ \t]+(.+?)[ \t\r]*$`)
+    changelogDatedHeading       = regexp.MustCompile(`(?m)^##[ \t]+\[(v\d+\.\d+\.\d+)\][ \t]+-[ \t]+(\d{4}-\d{2}-\d{2})[ \t\r]*$`)
     changelogCompareLink        = regexp.MustCompile(`(?m)^\[(v\d+\.\d+\.\d+)\]:\s*https?://\S+/compare/\S+`)
     shaHexRegex                 = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
+    shellSafeArgument           = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
 
-    /* the six Keep a Changelog sections first, then the shapes the projects also write. Every section a project
-       legitimately uses has to be listed: a missing one does not merely warn, it pressures the author into
-       renaming the section to one that is accepted, and a "## Security" in disguise as a second "## Fixed" is
-       worse than an unrecognised heading. */
+    /* an unlisted section pressures the author to rename it, and a "## Security" disguised as "## Fixed" is worse */
     standardSections = map[string]bool{
         "## Added":            true,
         "## Changed":          true,
@@ -70,7 +69,6 @@ type ChangelogAuditResult struct {
     Issues         []string
     Path           string
     HasVersion     bool
-    EntryBody      string
     NormalizedBody string
     HeadingTitle   string
 }
@@ -104,7 +102,7 @@ func (instance *AuditCommand) Flags() []clicontract.Flag {
         []clicontract.Flag{
             &clicontract.StringFlag{
                 Name:  flagToken,
-                Usage: "GitHub token (overrides GITHUB_TOKEN env)",
+                Usage: "GitHub token (overrides GITHUB_TOKEN from .env.local)",
                 Value: "",
             },
             &clicontract.StringFlag{
@@ -177,6 +175,14 @@ func (instance *AuditCommand) Run(
         return validateErr
     }
 
+    supplyChainChecks, supplyChainErr := parseSupplyChainChecks(commandContext.String(flagSupplyChain))
+    if nil != supplyChainErr {
+        return supplyChainErr
+    }
+    if true == commandContext.Bool(flagSupplyChainFail) && 0 == len(supplyChainChecks) {
+        return fmt.Errorf("--supply-chain-fail requires --supply-chain")
+    }
+
     exceptions, loadErr := loadExceptions(exceptionsFile)
     if nil != loadErr {
         return fmt.Errorf("load exceptions: %w", loadErr)
@@ -240,10 +246,15 @@ func (instance *AuditCommand) Run(
 
     envelope := output.NewEnvelope(meta)
 
-    if option.Format == output.FormatTable {
+    if output.FormatTable == option.Format {
         envelope.Table = buildAuditTable(audits, globalStatus, githubClient.RateLimit())
     } else {
-        envelope.Data = output.NewListPayload(audits, len(audits), option.Limit, option.Offset)
+        envelope.Data = output.NewListPayload(
+            output.WindowItems(audits, option.Limit, option.Offset),
+            len(audits),
+            option.Limit,
+            option.Offset,
+        )
     }
 
     envelope.Meta.DurationMilliseconds = time.Since(startedAt).Milliseconds()
@@ -388,7 +399,7 @@ func buildAuditTable(audits []types.ProjectAudit, globalStatus types.Status, rat
             if rows[leftIndex].priority != rows[rightIndex].priority {
                 return rows[leftIndex].priority < rows[rightIndex].priority
             }
-            return rows[leftIndex].version < rows[rightIndex].version
+            return 0 > compareSemver(rows[leftIndex].version, rows[rightIndex].version)
         })
 
         block := builder.AddBlock(repositoryKey, []string{"version", "level", "issue"})
@@ -416,12 +427,6 @@ func validateConcurrency(parallelism int) error {
 func auditProjectsParallel(client *service.GithubClient, projects []project.ProjectConfig, parallelism int) []types.ProjectAudit {
     audits := make([]types.ProjectAudit, len(projects))
 
-    if minConcurrency > parallelism {
-        parallelism = minConcurrency
-    }
-    if maxConcurrency < parallelism {
-        parallelism = maxConcurrency
-    }
     semaphore := make(chan struct{}, parallelism)
     var waitGroup sync.WaitGroup
 
@@ -491,7 +496,7 @@ func auditProject(client *service.GithubClient, projectConfig project.ProjectCon
     }
 
     sort.SliceStable(regularTags, func(leftIndex, rightIndex int) bool {
-        return compareSemver(regularTags[leftIndex].Name, regularTags[rightIndex].Name) < 0
+        return 0 > compareSemver(regularTags[leftIndex].Name, regularTags[rightIndex].Name)
     })
 
     releaseMap := make(map[string]*service.GithubRelease, len(releases))
@@ -535,20 +540,22 @@ func auditProject(client *service.GithubClient, projectConfig project.ProjectCon
     }
 
     for tagName := range releaseMap {
-        if false == tagSet[tagName] {
-            releaseAudits = append(releaseAudits, types.ReleaseAudit{
-                TagName: tagName,
-                Integrity: types.LevelResult{
-                    Status: types.LevelFailed,
-                    Issues: []string{"release has no matching tag"},
-                },
-                Distribution: types.LevelResult{Status: types.LevelSkipped},
-                Changelog:    types.LevelResult{Status: types.LevelSkipped},
-                Diff:         types.LevelResult{Status: types.LevelSkipped},
-                Presentation: types.LevelResult{Status: types.LevelSkipped},
-                Status:       types.StatusFailed,
-            })
+        if true == releaseHasMatchingTag(tagName, tagSet, projectConfig.GoSubmodule) {
+            continue
         }
+
+        releaseAudits = append(releaseAudits, types.ReleaseAudit{
+            TagName: tagName,
+            Integrity: types.LevelResult{
+                Status: types.LevelFailed,
+                Issues: []string{"release has no matching tag"},
+            },
+            Distribution: types.LevelResult{Status: types.LevelSkipped},
+            Changelog:    types.LevelResult{Status: types.LevelSkipped},
+            Diff:         types.LevelResult{Status: types.LevelSkipped},
+            Presentation: types.LevelResult{Status: types.LevelSkipped},
+            Status:       types.StatusFailed,
+        })
     }
 
     sortReleaseAudits(releaseAudits)
@@ -566,14 +573,13 @@ func auditProject(client *service.GithubClient, projectConfig project.ProjectCon
     ), nil
 }
 
-/*
-sortReleaseAudits orders the audited releases the way every other tag comparison in the tool does.
-A lexical order reads plausibly until a version reaches double digits, and then puts v4.1.12 above
-v4.1.9 in every table.
-*/
+func releaseHasMatchingTag(tagName string, regularTags map[string]bool, goSubmodule bool) bool {
+    return true == regularTags[tagName] || (true == goSubmodule && true == isGoSubmoduleTag(tagName))
+}
+
 func sortReleaseAudits(releaseAudits []types.ReleaseAudit) {
     sort.SliceStable(releaseAudits, func(leftIndex, rightIndex int) bool {
-        return compareSemver(releaseAudits[leftIndex].TagName, releaseAudits[rightIndex].TagName) < 0
+        return 0 > compareSemver(releaseAudits[leftIndex].TagName, releaseAudits[rightIndex].TagName)
     })
 }
 
@@ -618,13 +624,14 @@ func auditRelease(
             integrity.Issues = append(integrity.Issues, "release is prerelease")
         }
 
-        if true == shaHexRegex.MatchString(release.TargetCommitish) && "" != tag.CommitSHA && release.TargetCommitish != tag.CommitSHA {
+        if true == shaHexRegex.MatchString(release.TargetCommitish) && "" != tag.CommitSha && release.TargetCommitish != tag.CommitSha {
             if types.LevelFailed != integrity.Status {
                 integrity.Status = types.LevelWarning
             }
             integrity.Issues = append(integrity.Issues, fmt.Sprintf(
                 "release target_commitish %s does not match tag commit %s",
-                shortSha(release.TargetCommitish), shortSha(tag.CommitSHA),
+                shortSha(release.TargetCommitish),
+                shortSha(tag.CommitSha),
             ))
         }
     }
@@ -705,7 +712,7 @@ func auditDistribution(
         }
     }
 
-    tagReference := strings.TrimSpace(tag.CommitSHA)
+    tagReference := strings.TrimSpace(tag.CommitSha)
     packagistReference := strings.TrimSpace(packagistVersion.Reference)
 
     if "" != tagReference && "" != packagistReference && false == strings.HasPrefix(packagistReference, tagReference) && false == strings.HasPrefix(tagReference, packagistReference) {
@@ -743,15 +750,26 @@ func auditChangelog(
     }
 
     hasAnyContent := false
+    var fetchIssues []string
     for _, path := range changelogPaths {
         source := changelogSources[path]
         if nil == source.Err {
             hasAnyContent = true
-            break
+            continue
+        }
+        if false == isHttpStatus(source.Err, http.StatusNotFound) {
+            fetchIssues = append(fetchIssues, fmt.Sprintf("could not fetch %s: %s", path, source.Err.Error()))
         }
     }
 
     if false == hasAnyContent {
+        if 0 < len(fetchIssues) {
+            return ChangelogAuditResult{
+                Status: types.LevelFailed,
+                Issues: fetchIssues,
+            }
+        }
+
         return ChangelogAuditResult{
             Status: types.LevelNotApplicable,
         }
@@ -776,7 +794,6 @@ func auditChangelog(
             Status:         types.LevelOk,
             Path:           changelogPath,
             HasVersion:     true,
-            EntryBody:      entryBody,
             NormalizedBody: normalizeMarkdownBlock(entryBody),
         }
 
@@ -790,7 +807,9 @@ func auditChangelog(
                     result.Status = maxLevelStatus(result.Status, types.LevelWarning)
                     result.Issues = append(result.Issues, fmt.Sprintf(
                         "changelog heading title %q does not match release title summary %q (in %s)",
-                        result.HeadingTitle, releaseSummary, changelogPath,
+                        result.HeadingTitle,
+                        releaseSummary,
+                        changelogPath,
                     ))
                 }
             }
@@ -830,7 +849,10 @@ func auditChangelog(
 
     return ChangelogAuditResult{
         Status: types.LevelFailed,
-        Issues: []string{fmt.Sprintf("version %s not found in %s", tagName, strings.Join(missingPaths, ", "))},
+        Issues: append(
+            []string{fmt.Sprintf("version %s not found in %s", tagName, strings.Join(missingPaths, ", "))},
+            fetchIssues...,
+        ),
     }
 }
 
@@ -1090,6 +1112,7 @@ func buildProjectAudit(
     diffStatus := types.LevelOk
     presentationStatus := types.LevelOk
 
+    changelogApplies := false
     warningCount := 0
     changelogWarningCount := 0
     diffWarningCount := 0
@@ -1107,6 +1130,14 @@ func buildProjectAudit(
     for _, releaseAudit := range releaseAudits {
         if types.LevelFailed == releaseAudit.Integrity.Status {
             integrityStatus = types.LevelFailed
+        }
+
+        if types.LevelWarning == releaseAudit.Integrity.Status && types.LevelOk == integrityStatus {
+            integrityStatus = types.LevelWarning
+        }
+
+        if types.LevelNotApplicable != releaseAudit.Changelog.Status {
+            changelogApplies = true
         }
 
         if types.LevelFailed == releaseAudit.Distribution.Status && types.LevelFailed != distributionStatus {
@@ -1149,6 +1180,10 @@ func buildProjectAudit(
                 presentationStatus = types.LevelWarning
             }
         }
+    }
+
+    if 0 < len(releaseAudits) && false == changelogApplies {
+        changelogStatus = types.LevelNotApplicable
     }
 
     projectStatus := types.StatusOk
@@ -1267,11 +1302,7 @@ func fetchPackagistVersions(packagistPackage string) PackagistAuditInfo {
     }
 }
 
-/*
-renderAuditOutput writes the envelope and, for the table format only, the follow-up title-fix
-block. A machine-readable format carries exactly one document per invocation, so anything appended
-after it leaves the caller with a stream no parser accepts.
-*/
+/* a machine-readable format carries exactly one document, so the title fixes follow a table only */
 func renderAuditOutput(
     writer io.Writer,
     envelope output.Envelope,
@@ -1298,12 +1329,12 @@ func printTitleFixes(writer io.Writer, audits []types.ProjectAudit) {
         command string
     }
 
-    type repoFixes struct {
+    type repositoryFixes struct {
         key   string
         fixes []fixEntry
     }
 
-    var repos []repoFixes
+    var repositories []repositoryFixes
     seen := make(map[string]bool)
 
     for _, audit := range audits {
@@ -1316,7 +1347,7 @@ func printTitleFixes(writer io.Writer, audits []types.ProjectAudit) {
         for _, release := range audit.Releases {
             hasTitleIssue := false
             for _, issue := range release.Presentation.Issues {
-                if true == strings.Contains(issue, "title") {
+                if true == strings.HasPrefix(issue, "title ") {
                     hasTitleIssue = true
                     break
                 }
@@ -1335,11 +1366,10 @@ func printTitleFixes(writer io.Writer, audits []types.ProjectAudit) {
 
             correctedTitle := suggestCorrectedTitle(audit.ProjectName, release.TagName, release.ReleaseTitle)
             ghCommand := fmt.Sprintf(
-                "gh release edit %s --repo %s/%s --title %q",
-                release.TagName,
-                audit.OrganizationName,
-                audit.RepositoryName,
-                correctedTitle,
+                "gh release edit %s --repo %s --title %s",
+                shellQuote(release.TagName),
+                shellQuote(repositoryKey),
+                shellQuote(correctedTitle),
             )
 
             entries = append(entries, fixEntry{
@@ -1351,26 +1381,34 @@ func printTitleFixes(writer io.Writer, audits []types.ProjectAudit) {
 
         if 0 < len(entries) {
             seen[repositoryKey] = true
-            repos = append(repos, repoFixes{
+            repositories = append(repositories, repositoryFixes{
                 key:   repositoryKey,
                 fixes: entries,
             })
         }
     }
 
-    if 0 == len(repos) {
+    if 0 == len(repositories) {
         return
     }
 
     fmt.Fprintln(writer)
     fmt.Fprintln(writer, "TITLE FIXES:")
-    for _, repo := range repos {
-        fmt.Fprintf(writer, "  %s\n", repo.key)
-        for _, fix := range repo.fixes {
+    for _, repository := range repositories {
+        fmt.Fprintf(writer, "  %s\n", repository.key)
+        for _, fix := range repository.fixes {
             fmt.Fprintf(writer, "    %s  %s\n", fix.version, fix.url)
             fmt.Fprintf(writer, "    %s  %s\n", fix.version, fix.command)
         }
     }
+}
+
+func shellQuote(value string) string {
+    if true == shellSafeArgument.MatchString(value) {
+        return value
+    }
+
+    return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
 func parsePackagistUrl(url string) string {
@@ -1402,7 +1440,9 @@ func applyChangelogDateAndLinkChecks(version, previousTagName, content, changelo
             result.Status = maxLevelStatus(result.Status, types.LevelWarning)
             result.Issues = append(result.Issues, fmt.Sprintf(
                 "changelog entry for %s in %s has unparseable date %q",
-                version, changelogPath, titledMatches[titledIndex][2],
+                version,
+                changelogPath,
+                titledMatches[titledIndex][2],
             ))
         }
         result.HeadingTitle = strings.TrimSpace(titledMatches[titledIndex][3])
@@ -1419,20 +1459,24 @@ func applyChangelogDateAndLinkChecks(version, previousTagName, content, changelo
             result.Status = maxLevelStatus(result.Status, types.LevelWarning)
             result.Issues = append(result.Issues, fmt.Sprintf(
                 "changelog entry for %s in %s is missing the ' - YYYY-MM-DD - <Title>' heading suffix",
-                version, changelogPath,
+                version,
+                changelogPath,
             ))
         } else {
             if _, parseErr := time.Parse(exceptionDateLayout, datedMatches[datedIndex][2]); nil != parseErr {
                 result.Status = maxLevelStatus(result.Status, types.LevelWarning)
                 result.Issues = append(result.Issues, fmt.Sprintf(
                     "changelog entry for %s in %s has unparseable date %q",
-                    version, changelogPath, datedMatches[datedIndex][2],
+                    version,
+                    changelogPath,
+                    datedMatches[datedIndex][2],
                 ))
             }
             result.Status = maxLevelStatus(result.Status, types.LevelWarning)
             result.Issues = append(result.Issues, fmt.Sprintf(
                 "changelog entry for %s in %s is missing the ' - <Title>' suffix after the date",
-                version, changelogPath,
+                version,
+                changelogPath,
             ))
         }
     }
@@ -1453,7 +1497,8 @@ func applyChangelogDateAndLinkChecks(version, previousTagName, content, changelo
         result.Status = maxLevelStatus(result.Status, types.LevelWarning)
         result.Issues = append(result.Issues, fmt.Sprintf(
             "missing compare link `[%s]: .../compare/...` in %s",
-            version, changelogPath,
+            version,
+            changelogPath,
         ))
     }
 }

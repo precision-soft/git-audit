@@ -2,6 +2,8 @@ package service
 
 import (
     "net/http"
+    "strconv"
+    "strings"
     "time"
 
     "github.com/precision-soft/melody/v3/httpclient"
@@ -12,10 +14,8 @@ const (
     httpTimeout    = 30 * time.Second
     maxAttempts    = 3
     initialBackoff = 500 * time.Millisecond
-    /*
-       an effectively-unbounded ceiling that still guards against OOM: melody's httpclient defaults
-       to 10 MiB, which a large `compare` diff can exceed.
-    */
+    maxRetryAfter  = 30 * time.Second
+    /* melody's default of 10 MiB is exceeded by a large compare diff */
     maxResponseBodyBytes = 256 * 1024 * 1024
 )
 
@@ -25,11 +25,6 @@ func newHttpClient() httpclientcontract.Client {
     )
 }
 
-/*
-requestWithRetry executes a request through melody's httpclient, retrying 5xx and 429 with
-exponential backoff. melody re-derives the request body from the options on every attempt, so
-nothing has to rewind it.
-*/
 func requestWithRetry(
     client httpclientcontract.Client,
     method string,
@@ -60,7 +55,14 @@ func requestWithRetry(
         if attempt == maxAttempts {
             break
         }
-        time.Sleep(backoff)
+
+        delay := backoff
+        if nil != response {
+            if retryAfter := retryAfterDelay(response.Headers().Get("Retry-After")); 0 < retryAfter {
+                delay = retryAfter
+            }
+        }
+        time.Sleep(delay)
         backoff *= 2
     }
 
@@ -74,5 +76,19 @@ func shouldRetryStatus(statusCode int) bool {
     if http.StatusTooManyRequests == statusCode {
         return true
     }
-    return statusCode >= 500 && statusCode < 600
+    return 500 <= statusCode && 600 > statusCode
+}
+
+func retryAfterDelay(header string) time.Duration {
+    seconds, parseErr := strconv.Atoi(strings.TrimSpace(header))
+    if nil != parseErr || 0 >= seconds {
+        return 0
+    }
+
+    delay := time.Duration(seconds) * time.Second
+    if maxRetryAfter < delay {
+        return maxRetryAfter
+    }
+
+    return delay
 }

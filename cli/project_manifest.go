@@ -4,12 +4,14 @@ import (
     "bytes"
     "encoding/json"
     "fmt"
+    "io"
     "net/url"
     "os"
     "path/filepath"
     "strings"
 
     "github.com/precision-soft/git-audit/config/project"
+    "github.com/precision-soft/git-audit/service"
 )
 
 type projectManifest struct {
@@ -32,6 +34,9 @@ func loadProjectManifest(manifestPath string, builtInProjects []project.ProjectC
     if decodeErr := decoder.Decode(&manifest); nil != decodeErr {
         return nil, fmt.Errorf("decode project configuration: %w", decodeErr)
     }
+    if _, tokenErr := decoder.Token(); io.EOF != tokenErr {
+        return nil, fmt.Errorf("decode project configuration: unexpected content after the manifest")
+    }
     if "" == manifest.Mode {
         manifest.Mode = "merge"
     }
@@ -47,21 +52,21 @@ func loadProjectManifest(manifestPath string, builtInProjects []project.ProjectC
     byUrl := make(map[string]int)
     for index, projectConfig := range projects {
         byName[strings.ToLower(projectConfig.Name)] = index
-        byUrl[strings.ToLower(strings.TrimSuffix(projectConfig.GithubUrl, "/"))] = index
+        byUrl[service.NormalizeRepositoryUrl(projectConfig.GithubUrl)] = index
     }
     for _, projectConfig := range manifest.Projects {
         if validateErr := validateManifestProject(projectConfig); nil != validateErr {
             return nil, validateErr
         }
         nameKey := strings.ToLower(projectConfig.Name)
-        urlKey := strings.ToLower(strings.TrimSuffix(projectConfig.GithubUrl, "/"))
+        urlKey := service.NormalizeRepositoryUrl(projectConfig.GithubUrl)
         nameIndex, nameExists := byName[nameKey]
         urlIndex, urlExists := byUrl[urlKey]
         if true == nameExists && true == urlExists && nameIndex != urlIndex {
             return nil, fmt.Errorf("project %q conflicts with an existing name and url", projectConfig.Name)
         }
         if true == nameExists {
-            delete(byUrl, strings.ToLower(strings.TrimSuffix(projects[nameIndex].GithubUrl, "/")))
+            delete(byUrl, service.NormalizeRepositoryUrl(projects[nameIndex].GithubUrl))
             projects[nameIndex] = projectConfig
             byUrl[urlKey] = nameIndex
             continue
@@ -83,6 +88,9 @@ func validateManifestProject(projectConfig project.ProjectConfig) error {
     parsed, parseErr := url.Parse(projectConfig.GithubUrl)
     if nil != parseErr || "https" != parsed.Scheme || "github.com" != strings.ToLower(parsed.Host) {
         return fmt.Errorf("project %q has an invalid github url", projectConfig.Name)
+    }
+    if 2 != len(strings.Split(strings.Trim(parsed.Path, "/"), "/")) {
+        return fmt.Errorf("project %q has an invalid github url: an owner and a repository are required", projectConfig.Name)
     }
     if organization, repository := parseGithubUrl(projectConfig.GithubUrl); "" == organization || "" == repository {
         return fmt.Errorf("project %q has an invalid github url: an owner and a repository are required", projectConfig.Name)
